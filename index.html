@@ -347,6 +347,10 @@ button.hrow:hover{background:var(--hover)}
 .btn[aria-pressed=true]{background:var(--late);border-color:var(--late);color:#fff}
 .deps{display:flex;flex-wrap:wrap;gap:6px}
 .deps:empty{display:none}
+/* Lecture seule : les commandes de modification sont masquées */
+body.ro #addBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
+body.ro .bar,body.ro .dia{cursor:pointer}
+.rotag{font-size:12.5px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 #app[hidden]{display:none}
 .panel:not(.open){box-shadow:none}
 </style>
@@ -540,8 +544,11 @@ function FirebaseBackend(){
         if(!user){h.onGate('login');return}
         B.uid=user.uid;B.email=user.email||'';h.onGate('loading');
         let name=null;
-        try{const s=await fd.get(fd.ref(db,'membres/'+user.uid));if(!s.exists())throw new Error('absent');name=s.val()}
-        catch(e){h.onGate('denied',{uid:user.uid,email:user.email});return}
+        /* Membre : lecture et écriture. Lecteur (sous /lecteurs) : lecture seule. */
+        const look=async p=>{try{const s=await fd.get(fd.ref(db,p+'/'+user.uid));return s.exists()?s:null}catch(e){return null}};
+        const sm=await look('membres'),sl=sm?null:await look('lecteurs');
+        if(!sm&&!sl){h.onGate('denied',{uid:user.uid,email:user.email});return}
+        B.ro=!sm;name=(sm||sl).val();
         B.name=typeof name==='string'&&name.trim()?name.trim():(typeof name==='object'&&name&&name.nom)?String(name.nom):B.email.split('@')[0];
         h.onUser({name:B.name,email:B.email});
         const err=e=>{console.error(e);h.onError(e)};
@@ -578,6 +585,7 @@ function send(patch,msg,id){
   .catch(e=>{pendingWrites--;console.error(e);const denied=/permission/i.test(e&&(e.code||e.message)||'');setSaved(denied?'Échec : votre compte n’a pas les droits d’écriture':'Échec de l’enregistrement','err');toast(denied?'Modification refusée : droits insuffisants.':'La modification n’a pas pu être enregistrée.')})}
 function stamp(r){r.u=BE.uid;r.by=BE.name;r.at=Date.now();return r}
 function mutate(label,fn,id){
+  if(BE.ro){toast('Accès en lecture seule : vous ne pouvez pas modifier le planning.');update();refreshPanel();return}
   const before=new Map(ITEMS.map(r=>[r.id,JSON.stringify(r)]));
   fn();
   if(typeof label==='function')label=label();
@@ -891,7 +899,7 @@ function openHistory(keep){
    ===================================================================== */
 let drag=null,suppressClick=false,pendingRemote=null;
 $('rows').addEventListener('pointerdown',e=>{
-  const el=e.target.closest('.bar[data-id],.dia[data-id]');if(!el||e.button!==0)return;
+  const el=e.target.closest('.bar[data-id],.dia[data-id]');if(!el||e.button!==0||BE.ro)return;
   const r=byId(el.dataset.id);if(!r)return;
   const rect=el.getBoundingClientRect(),ox=e.clientX-rect.left;
   let mode='move';
@@ -1057,7 +1065,7 @@ function applyRemoteItems(obj){
 }
 const H={
   onGate:(k,i)=>gate(k,i),
-  onUser:u=>{$('who').innerHTML=`<span class="me">${esc(u.name)}</span><button class="lnk" id="logout">Se déconnecter</button>`;$('logout').onclick=()=>BE.logout()},
+  onUser:u=>{document.body.classList.toggle('ro',!!BE.ro);$('who').innerHTML=`<span class="me">${esc(u.name)}</span>${BE.ro?'<span class="rotag">Lecture seule</span>':''}<button class="lnk" id="logout">Se déconnecter</button>`;$('logout').onclick=()=>BE.logout()},
   onOrig:obj=>{ORIG=Object.fromEntries(fromObj(obj).map(r=>[r.id,r]));if(READY)update()},
   onItems:obj=>{if(drag){pendingRemote=obj;return}applyRemoteItems(obj)},
   onJournal:list=>{
