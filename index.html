@@ -348,7 +348,7 @@ button.hrow:hover{background:var(--hover)}
 .deps{display:flex;flex-wrap:wrap;gap:6px}
 .deps:empty{display:none}
 /* Lecture seule : les commandes de modification sont masquées */
-body.ro #addBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
+body.ro #addBtn,body.ro #mailBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
 body.ro .bar,body.ro .dia{cursor:pointer}
 .rotag{font-size:12.5px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 #app[hidden]{display:none}
@@ -556,7 +556,7 @@ function FirebaseBackend(){
         const ready=k=>{got[k]=true;if(got.items&&got.orig)h.onReady()};
         unsubs.push(fd.onValue(fd.ref(db,'planning/orig'),s=>{h.onOrig(s.val()||{});if(!got.orig)ready('orig')},err));
         unsubs.push(fd.onValue(fd.ref(db,'planning/items'),s=>{h.onItems(s.val()||{});if(!got.items)ready('items')},err));
-        unsubs.push(fd.onValue(fd.query(fd.ref(db,'planning/journal'),fd.limitToLast(150)),s=>{const v=s.val()||{};h.onJournal(Object.keys(v).sort().map(k=>({k,...v[k]})))},err));
+        if(!B.ro)unsubs.push(fd.onValue(fd.query(fd.ref(db,'planning/journal'),fd.limitToLast(150)),s=>{const v=s.val()||{};h.onJournal(Object.keys(v).sort().map(k=>({k,...v[k]})))},err));
         unsubs.push(fd.onValue(fd.ref(db,'planning/presence'),s=>{const v=s.val()||{};h.onPresence(Object.entries(v).map(([u,x])=>({u,n:(x&&x.n)||'?'})))},err));
         const pr=fd.ref(db,'planning/presence/'+user.uid);
         unsubs.push(fd.onValue(fd.ref(db,'.info/connected'),s=>{const on=!!s.val();h.onConn(on);if(on)fd.onDisconnect(pr).remove().then(()=>fd.set(pr,{n:B.name,at:fd.serverTimestamp()})).catch(()=>{})}));
