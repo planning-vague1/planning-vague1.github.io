@@ -348,8 +348,11 @@ button.hrow:hover{background:var(--hover)}
 .deps{display:flex;flex-wrap:wrap;gap:6px}
 .deps:empty{display:none}
 /* Lecture seule : les commandes de modification sont masquées */
-body.ro #addBtn,body.ro #mailBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
+body.ro #addBtn,body.ro #teamAddBtn,body.ro #mailBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
 body.ro .bar,body.ro .dia{cursor:pointer}
+/* Todo équipe : actions affectées à un membre */
+#todoBtn[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.asg{font-weight:600;color:var(--fg)}
 .rotag{font-size:12.5px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 #app[hidden]{display:none}
 .panel:not(.open){box-shadow:none}
@@ -400,10 +403,13 @@ window.FIREBASE_CONFIG = {
     <div class="seg" id="crit" role="group" aria-label="Criticité"></div>
     <select id="porteur" aria-label="Porteur"></select>
     <button class="btn" id="critBtn" aria-pressed="false" title="Regrouper les actions de criticité Haute dans un bloc séparé, en haut du planning">Actions critiques à part</button>
+    <button class="btn" id="todoBtn" aria-pressed="false" title="N’afficher que les actions affectées à un membre de l’équipe">Todo équipe</button>
+    <select id="todoWho" aria-label="Membre de l’équipe" hidden></select>
     <span class="sp"></span>
     <label class="zoom" id="zoomWrap">Zoom <input type="range" id="zoom" min="26" max="72" value="40"></label>
     <button class="btn" id="foldAll">Tout replier</button>
     <button class="btn primary" id="addBtn">+ Ajouter une action</button>
+    <button class="btn" id="teamAddBtn" title="Créer une action affectée à un membre de l’équipe">+ Tâche d’équipe</button>
     <button class="btn" id="exportBtn">Exporter (CSV)</button>
     <button class="btn" id="mailBtn">Compte rendu (mail)</button>
     <button class="btn" id="reset" disabled>Réinitialiser les filtres</button>
@@ -479,20 +485,24 @@ const isMod=r=>!isNew(r)&&FIELDS.some(f=>r[f]!==ORIG[r.id][f]);
 const splitP=p=>String(p||'').split('/').map(x=>x.trim()).filter(Boolean);
 const porteurs=()=>[...new Set(ITEMS.flatMap(r=>splitP(r.p)))].sort((a,b)=>a.localeCompare(b,'fr'));
 const byId=id=>ITEMS.find(x=>x.id===id);
+/* Équipe : membres du site (/membres), complétés par les personnes déjà affectées (visibles aussi des lecteurs) */
+let MEMBRES=[];
+const team=()=>{const m=new Map(MEMBRES.map(x=>[x.uid,x.name]));ITEMS.forEach(r=>{if(r.t&&!m.has(r.t))m.set(r.t,r.tn||'?')});return [...m].map(([uid,name])=>({uid,name})).sort((a,b)=>a.name.localeCompare(b.name,'fr'))};
+const nameOf=r=>r.t?((MEMBRES.find(x=>x.uid===r.t)||{}).name||r.tn||'?'):'';
 
 const realToday=(()=>{const n=new Date();return Math.round((new Date(n.getFullYear(),n.getMonth(),n.getDate())-new Date(2026,9,5))/864e5)})();
 const defT=realToday>=0&&realToday<N?realToday:2;
 
 /* Préférences d'affichage : propres à chaque utilisateur (ce navigateur) */
-const S={view:'gantt',T:defT,crit:'Toutes',q:'',porteur:'',chs:new Set(),status:null,collapsed:new Set(),critBlock:false};
+const S={view:'gantt',T:defT,crit:'Toutes',q:'',porteur:'',chs:new Set(),status:null,collapsed:new Set(),critBlock:false,todo:''};/* todo : '' (inactif), '*' (toute l'équipe) ou UID d'un membre */
 const PANEL={mode:null,id:null};
 const PREF_KEY='planning-v1-prefs';
 let prefTimer=null,restoredZoom=false;
-function savePrefs(){clearTimeout(prefTimer);prefTimer=setTimeout(()=>{try{localStorage.setItem(PREF_KEY,JSON.stringify({view:S.view,T:S.T,crit:S.crit,q:S.q,porteur:S.porteur,chs:[...S.chs],status:S.status,collapsed:[...S.collapsed],critBlock:S.critBlock,zoom:+$('zoom').value}))}catch(e){}},250)}
+function savePrefs(){clearTimeout(prefTimer);prefTimer=setTimeout(()=>{try{localStorage.setItem(PREF_KEY,JSON.stringify({view:S.view,T:S.T,crit:S.crit,q:S.q,porteur:S.porteur,chs:[...S.chs],status:S.status,collapsed:[...S.collapsed],critBlock:S.critBlock,todo:S.todo,zoom:+$('zoom').value}))}catch(e){}},250)}
 function loadPrefs(){
   try{const o=JSON.parse(localStorage.getItem(PREF_KEY)||'null');if(!o)return;
     S.view=o.view==='board'?'board':'gantt';if(Number.isInteger(o.T)&&o.T>=0&&o.T<N)S.T=o.T;
-    S.crit=o.crit||'Toutes';S.q=o.q||'';S.porteur=o.porteur||'';S.chs=new Set(o.chs||[]);S.status=o.status||null;S.collapsed=new Set(o.collapsed||[]);S.critBlock=!!o.critBlock;
+    S.crit=o.crit||'Toutes';S.q=o.q||'';S.porteur=o.porteur||'';S.chs=new Set(o.chs||[]);S.status=o.status||null;S.collapsed=new Set(o.collapsed||[]);S.critBlock=!!o.critBlock;S.todo=typeof o.todo==='string'?o.todo:'';
     if(o.zoom>=26&&o.zoom<=72){$('zoom').value=o.zoom;document.documentElement.style.setProperty('--dw',o.zoom+'px');restoredZoom=true}
     $('q').value=S.q}catch(e){}}
 
@@ -503,6 +513,7 @@ function cleanItem(r,i){
   const o={id:r.id,ch:String(r.ch||'Divers'),br:String(r.br||'Divers'),a:String(r.a||''),p:String(r.p||''),c:['Haute','Moyenne','Basse'].includes(r.c)?r.c:'',s,e,o:Number.isFinite(r.o)?r.o:i};
   if(r.st==='fait'||r.st==='bloque')o.st=r.st;
   if(o.st==='bloque'){o.m=String(r.m||'');o.bat=Number(r.bat)||Date.now()}
+  if(r.t){o.t=String(r.t).slice(0,128);o.tn=String(r.tn||'').slice(0,120)}
   if(r.by)o.by=String(r.by);if(r.u)o.u=String(r.u);if(r.at)o.at=Number(r.at)||0;
   const d=r.d&&typeof r.d==='object'?[...new Set(Object.values(r.d).map(String))].filter(x=>x!==r.id&&/^[A-Za-z0-9_.-]{1,40}$/.test(x)):[];
   if(d.length)o.d=d;
@@ -522,7 +533,7 @@ function LocalBackend(){
   const emit=()=>{const db=read();H.onOrig(db.orig||{});H.onItems(db.items||{});H.onJournal(db.journal||[])};
   const jr=(db,msg,id)=>{db.journal=(db.journal||[]).concat({k:String(Date.now())+Math.random().toString(36).slice(2,6),at:Date.now(),by:'Vous',u:'local',msg,id:id||''}).slice(-200)};
   const B={shared:false,uid:'local',name:'Vous',
-    async start(h){H=h;h.onConn(true);h.onPresence([]);addEventListener('storage',e=>{if(e.key===K)emit()});emit();h.onReady()},
+    async start(h){H=h;h.onConn(true);h.onPresence([]);h.onMembers([{uid:'local',name:'Vous'}]);addEventListener('storage',e=>{if(e.key===K)emit()});emit();h.onReady()},
     async write(patch,msg,id){const db=read();db.items=db.items||{};for(const k in patch){if(patch[k]===null)delete db.items[KEYOF(k)];else db.items[KEYOF(k)]=patch[k]}jr(db,msg,id);if(!save(db))throw new Error('Le stockage de ce navigateur est indisponible.');emit()},
     async seed(obj){const db={items:obj,orig:obj};jr(db,`Planning initial importé (${Object.keys(obj).length} actions)`);if(!save(db))throw new Error('Le stockage de ce navigateur est indisponible.');emit()},
     async replaceAll(obj,msg){const db=read();db.items=obj;jr(db,msg);if(!save(db))throw new Error('Le stockage de ce navigateur est indisponible.');emit()},
@@ -557,6 +568,8 @@ function FirebaseBackend(){
         unsubs.push(fd.onValue(fd.ref(db,'planning/orig'),s=>{h.onOrig(s.val()||{});if(!got.orig)ready('orig')},err));
         unsubs.push(fd.onValue(fd.ref(db,'planning/items'),s=>{h.onItems(s.val()||{});if(!got.items)ready('items')},err));
         if(!B.ro)unsubs.push(fd.onValue(fd.query(fd.ref(db,'planning/journal'),fd.limitToLast(150)),s=>{const v=s.val()||{};h.onJournal(Object.keys(v).sort().map(k=>({k,...v[k]})))},err));
+        /* Équipe affectable (todo) : liste des membres, lisible par les membres uniquement */
+        if(!B.ro)unsubs.push(fd.onValue(fd.ref(db,'membres'),s=>{const v=s.val()||{};h.onMembers(Object.entries(v).map(([uid,n])=>({uid,name:typeof n==='string'&&n.trim()?n.trim():(n&&typeof n==='object'&&n.nom)?String(n.nom):uid.slice(0,6)})))},e=>console.error(e)));
         unsubs.push(fd.onValue(fd.ref(db,'planning/presence'),s=>{const v=s.val()||{};h.onPresence(Object.entries(v).map(([u,x])=>({u,n:(x&&x.n)||'?'})))},err));
         const pr=fd.ref(db,'planning/presence/'+user.uid);
         unsubs.push(fd.onValue(fd.ref(db,'.info/connected'),s=>{const on=!!s.val();h.onConn(on);if(on)fd.onDisconnect(pr).remove().then(()=>fd.set(pr,{n:B.name,at:fd.serverTimestamp()})).catch(()=>{})}));
@@ -633,7 +646,8 @@ function baseMatch(r){
   if(S.crit!=='Toutes'&&r.c!==S.crit)return false;
   if(S.chs.size&&!S.chs.has(r.ch))return false;
   if(S.porteur&&!splitP(r.p).includes(S.porteur))return false;
-  if(S.q){const h=(r.id+' '+r.a+' '+r.p+' '+r.br+' '+r.ch+' '+(r.m||'')).toLowerCase();if(!S.q.split(/\s+/).every(w=>h.includes(w)))return false}
+  if(S.todo&&!(S.todo==='*'?r.t:r.t===S.todo))return false;
+  if(S.q){const h=(r.id+' '+r.a+' '+r.p+' '+r.br+' '+r.ch+' '+(r.m||'')+' '+nameOf(r)).toLowerCase();if(!S.q.split(/\s+/).every(w=>h.includes(w)))return false}
   return true}
 function statusMatch(r){if(!S.status)return true;if(S.status==='semaine')return thisWeek(r);if(S.status==='modif')return isMod(r)||isNew(r);return status(r)===S.status}
 /* Priorité : Haute, puis Moyenne, Basse, non renseignée */
@@ -653,6 +667,9 @@ const critBox=$('crit');
 ['Toutes','Haute','Moyenne','Basse'].forEach(c=>{const b=document.createElement('button');b.textContent=c;b.dataset.c=c;b.onclick=()=>{S.crit=c;update()};critBox.appendChild(b)});
 $('porteur').onchange=e=>{S.porteur=e.target.value;update()};
 $('critBtn').onclick=()=>{S.critBlock=!S.critBlock;update()};
+$('todoBtn').onclick=()=>{S.todo=S.todo?'':'*';update()};
+$('todoWho').onchange=e=>{S.todo=e.target.value||'*';update()};
+$('teamAddBtn').onclick=()=>openEdit(null,null,BE.uid);
 $('q').addEventListener('input',e=>{S.q=e.target.value.toLowerCase().trim();update()});
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{S.view=b.dataset.view;update()});
 const slider=$('tslider');
@@ -660,7 +677,7 @@ slider.oninput=e=>setT(+e.target.value);
 $('todayBtn').onclick=()=>setT(defT);
 $('zoom').oninput=e=>{document.documentElement.style.setProperty('--dw',e.target.value+'px');savePrefs()};
 $('foldAll').onclick=()=>{if(S.collapsed.size)S.collapsed.clear();else CHS.forEach(c=>S.collapsed.add(c));update()};
-$('reset').onclick=()=>{S.crit='Toutes';S.q='';S.porteur='';S.chs.clear();S.status=null;$('q').value='';update()};
+$('reset').onclick=()=>{S.crit='Toutes';S.q='';S.porteur='';S.chs.clear();S.status=null;S.todo='';$('q').value='';update()};
 $('addBtn').onclick=()=>openEdit(null);
 $('exportBtn').onclick=exportCSV;
 $('mailBtn').onclick=exportMail;
@@ -688,6 +705,11 @@ function renderTop(){
   $('kpis').querySelectorAll('.kpi').forEach(b=>b.onclick=()=>{S.status=S.status===b.dataset.k?null:b.dataset.k;update()});
   critBox.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.c===S.crit));
   $('critBtn').setAttribute('aria-pressed',S.critBlock);
+  const TM=team();if(S.todo&&S.todo!=='*'&&!TM.some(m=>m.uid===S.todo))S.todo='*';
+  const nT=ITEMS.filter(r=>r.t).length;
+  $('todoBtn').setAttribute('aria-pressed',!!S.todo);$('todoBtn').textContent=`Todo équipe${nT?' ('+nT+')':''}`;
+  $('todoWho').hidden=!S.todo;
+  $('todoWho').innerHTML='<option value="*">Toute l’équipe</option>'+TM.map(m=>`<option value="${esc(m.uid)}"${m.uid===S.todo?' selected':''}>${esc(m.uid===BE.uid?m.name+' (moi)':m.name)} – ${ITEMS.filter(r=>r.t===m.uid).length}</option>`).join('');
   document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===S.view));
   const P=porteurs();if(S.porteur&&!P.includes(S.porteur))S.porteur='';
   $('porteur').innerHTML='<option value="">Tous les porteurs</option>'+P.map(p=>`<option${p===S.porteur?' selected':''}>${esc(p)}</option>`).join('');
@@ -697,7 +719,7 @@ function renderTop(){
     +(nMod||S.status==='modif'?`<button class="chip modchip" data-modif aria-pressed="${S.status==='modif'}">Modifiées ou ajoutées<small>${nMod}</small></button>`:'')
     +(nDel?`<span class="delnote">${nDel} supprimée${nDel>1?'s':''}</span>`:'');
   chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{if('modif' in b.dataset){S.status=S.status==='modif'?null:'modif';update();return}const c=b.dataset.ch;if(!c)S.chs.clear();else S.chs.has(c)?S.chs.delete(c):S.chs.add(c);update()});
-  $('reset').disabled=!(S.crit!=='Toutes'||S.q||S.porteur||S.chs.size||S.status);
+  $('reset').disabled=!(S.crit!=='Toutes'||S.q||S.porteur||S.chs.size||S.status||S.todo);
   $('foldAll').textContent=S.collapsed.size?'Tout déplier':'Tout replier';
   $('ganttView').hidden=S.view!=='gantt';$('boardView').hidden=S.view!=='board';
   $('zoomWrap').style.display=$('foldAll').style.display=S.view==='gantt'?'':'none';
@@ -742,7 +764,7 @@ function renderGantt(rows,intro){
     if(S.collapsed.has(ch))return;
     if(sub(r)!==br){br=sub(r);h+=`<div class="r sb"><div class="lc">${esc(br)}</div><div class="tc"></div></div>`}
     const st=status(r);
-    h+=`<div class="r a st-${st}${PANEL.id===r.id&&PANEL.mode?' sel':''}${FLASH.has(r.id)?' flash':''}"><div class="lc"><button class="al" data-open="${r.id}"><span class="id">${esc(r.id)}</span><span class="tx">${esc(r.a)}</span><span class="meta">${st==='fait'?'<span class="tick">✓ Fait</span>':''}${blkTag(r)}${tag(r)}${r.p?`<span>${esc(r.p)}</span>`:''}${r.c?`<span class="crit ${r.c}">${r.c}</span>`:''}${r.d?`<span title="Dépend de ${esc(r.d.join(', '))}">↳ après ${esc(r.d.join(', '))}</span>`:''}</span></button></div><div class="tc">${mark(r,i++)}</div></div>`});
+    h+=`<div class="r a st-${st}${PANEL.id===r.id&&PANEL.mode?' sel':''}${FLASH.has(r.id)?' flash':''}"><div class="lc"><button class="al" data-open="${r.id}"><span class="id">${esc(r.id)}</span><span class="tx">${esc(r.a)}</span><span class="meta">${st==='fait'?'<span class="tick">✓ Fait</span>':''}${blkTag(r)}${tag(r)}${r.t?`<span class="asg" title="Todo équipe : affectée à ${esc(nameOf(r))}">→ ${esc(nameOf(r))}</span>`:''}${r.p?`<span>${esc(r.p)}</span>`:''}${r.c?`<span class="crit ${r.c}">${r.c}</span>`:''}${r.d?`<span title="Dépend de ${esc(r.d.join(', '))}">↳ après ${esc(r.d.join(', '))}</span>`:''}</span></button></div><div class="tc">${mark(r,i++)}</div></div>`});
   if(!rows.length)h=`<div class="empty">Aucune action ne correspond à ces filtres.<br><button class="btn" onclick="document.getElementById('reset').click()">Réinitialiser les filtres</button></div>`;
   const R=$('rows');R.innerHTML=h;
   if(intro){R.classList.add('intro');setTimeout(()=>R.classList.remove('intro'),2400)}
@@ -754,7 +776,7 @@ function renderBoard(rows){
   $('board').innerHTML=W.map(([a,b,l])=>{
     const list=rows.filter(r=>r.e>=a&&r.e<=b).sort((x,y)=>rank(x)-rank(y)||x.e-y.e||x.id.localeCompare(y.id));
     const cur=S.T>=a&&S.T<=b;
-    return `<section class="col${cur?' cur':''}"><h3>${l}<small>${list.length}</small></h3><div class="list">${list.length?list.map(r=>{const st=status(r);return `<button class="card st-${st}${FLASH.has(r.id)?' flash':''}" data-open="${r.id}"><span class="top"><span>${esc(r.id)} · ${esc(r.ch)}</span><span>${range(r)}</span></span><span class="t">${esc(r.a)}</span><span class="m">${esc(r.p)}${r.c?', criticité '+r.c.toLowerCase():''}</span>${st==='bloque'&&r.m?`<span class="m blkm">${esc(r.m)}</span>`:''}<span class="badge">${ST[st]}${isNew(r)?' · ajoutée':isMod(r)?' · modifiée':''}</span></button>`}).join(''):'<p class="empty" style="padding:16px">Aucune échéance</p>'}</div></section>`}).join('');
+    return `<section class="col${cur?' cur':''}"><h3>${l}<small>${list.length}</small></h3><div class="list">${list.length?list.map(r=>{const st=status(r);return `<button class="card st-${st}${FLASH.has(r.id)?' flash':''}" data-open="${r.id}"><span class="top"><span>${esc(r.id)} · ${esc(r.ch)}</span><span>${range(r)}</span></span><span class="t">${esc(r.a)}</span><span class="m">${esc(r.p)}${r.c?', criticité '+r.c.toLowerCase():''}</span>${r.t?`<span class="m asg">→ ${esc(nameOf(r))}</span>`:''}${st==='bloque'&&r.m?`<span class="m blkm">${esc(r.m)}</span>`:''}<span class="badge">${ST[st]}${isNew(r)?' · ajoutée':isMod(r)?' · modifiée':''}</span></button>`}).join(''):'<p class="empty" style="padding:16px">Aucune échéance</p>'}</div></section>`}).join('');
 }
 
 /* =====================================================================
@@ -775,7 +797,7 @@ function openPanel(id){
   const was=f=>o&&o[f]!==r[f]?`<small class="was">avant : ${esc(f==='s'||f==='e'?fmt(o[f]):o[f]||'—')}</small>`:'';
   $('panel').innerHTML=`<div class="ph st-${st}"><button class="x" id="px" aria-label="Fermer">×</button><span class="crumb">${esc(r.id)} · ${esc(r.ch)} › ${esc(r.br)}</span><h2>${esc(r.a)}</h2>${o&&o.a!==r.a?`<small class="was">avant : ${esc(o.a)}</small>`:''}<span class="tags"><span class="status">${ST[st]}</span>${tag(r)}</span>${r.by&&r.at?`<span class="lastmod">Dernière modification par <b>${esc(r.by)}</b>, ${esc(when(r.at))}</span>`:''}</div>
   <div class="pb st-${st}">
-    <dl class="facts"><dt>Porteur</dt><dd>${esc(r.p)||'—'}${was('p')}</dd><dt>Criticité</dt><dd>${r.c?`<span class="crit ${r.c}">${r.c}</span>`:'Non renseignée'}${was('c')}</dd>
+    <dl class="facts"><dt>Porteur</dt><dd>${esc(r.p)||'—'}${was('p')}</dd><dt>Affectée à</dt><dd>${BE.ro?esc(nameOf(r))||'—':`<select id="asgSel" aria-label="Affecter à un membre de l’équipe">${teamOpts(r.t)}</select>`}</dd><dt>Criticité</dt><dd>${r.c?`<span class="crit ${r.c}">${r.c}</span>`:'Non renseignée'}${was('c')}</dd>
     <dt>${r.s===r.e?'Date':'Début'}</dt><dd>${fmtL(r.s)}${was('s')}</dd>${r.s===r.e?'':`<dt>Fin</dt><dd>${fmtL(r.e)}${was('e')}</dd><dt>Durée</dt><dd>${dur} jour${dur>1?'s':''} ouvré${dur>1?'s':''}</dd>`}<dt>Au ${fmt(S.T)}</dt><dd>${whenTxt}</dd></dl>
     <div><div class="mini">${r.s===r.e?`<i class="dia" style="left:${pc(r.s+.5)}%"></i>`:`<i class="bar" style="left:${pc(r.s)}%;width:${pc(r.e-r.s+1)}%"></i>`}<i class="t" style="left:${pc(S.T+.5)}%"></i></div><div class="mini-l"><span>5 oct.</span><span>${fmt(span-1)}</span></div></div>
     ${B?`<div class="blkbox"><strong>Bloqué depuis le ${new Date(r.bat).toLocaleDateString('fr-FR',{day:'numeric',month:'long'})}</strong><p>${r.m?esc(r.m):'Aucun motif indiqué.'}</p><div class="pact"><button class="btn" id="blkEdit">Modifier le motif</button><button class="btn blkon" id="unblk">Débloquer</button></div></div>`:''}
@@ -789,6 +811,7 @@ function openPanel(id){
   showPanel('Détail de l’action');
   $('px').onclick=closePanel;
   $('editBtn').onclick=()=>openEdit(id);
+  if($('asgSel'))$('asgSel').onchange=e=>{const u=e.target.value;mutate(u?`${id} affectée à ${teamName(u)}`:`${id} retirée de la todo équipe`,()=>assign(r,u),id)};
   $('doneBtn').onclick=()=>mutate(r.st==='fait'?`${id} rouverte`:`${id} marquée comme faite`,()=>{if(r.st==='fait')delete r.st;else{r.st='fait';delete r.m;delete r.bat}},id);
   const showBlk=()=>{$('blkForm').hidden=false;$('mainAct').hidden=true;$('blkMotif').focus()};
   if($('blkBtn'))$('blkBtn').onclick=showBlk;
@@ -801,13 +824,17 @@ function openPanel(id){
   markSel(id);
 }
 
+/* Affectation à un membre de l'équipe : UID (t) et nom affiché (tn, lisible par les lecteurs) */
+const teamName=u=>(team().find(m=>m.uid===u)||{}).name||'?';
+const teamOpts=cur=>'<option value="">Non affectée</option>'+team().map(m=>`<option value="${esc(m.uid)}"${m.uid===cur?' selected':''}>${esc(m.uid===BE.uid?m.name+' (moi)':m.name)}</option>`).join('');
+function assign(x,u){if(u){x.t=u;x.tn=teamName(u)}else{delete x.t;delete x.tn}}
 function nextId(ch){const p=PREFIX(ch);const nums=[...ITEMS,...Object.values(ORIG)].filter(r=>r.id.startsWith(p+'-')).map(r=>parseInt(r.id.slice(p.length+1))||0);return p+'-'+String(Math.max(0,...nums)+1).padStart(2,'0')}
-function openEdit(id,presetCh){
-  const r=id?byId(id):{ch:presetCh||[...S.chs][0]||CHS[0],br:'',a:'',p:'',c:'',s:S.T,e:S.T};
+function openEdit(id,presetCh,presetT){
+  const r=id?byId(id):{ch:presetCh||[...S.chs][0]||CHS[0],br:'',a:'',p:'',c:'',s:S.T,e:S.T,t:presetT||''};
   if(!r)return;PANEL.mode='edit';PANEL.id=id;
   const brs=ch=>[...new Set(ITEMS.filter(x=>x.ch===ch).map(x=>x.br))];
   const ms=r.s===r.e,cur=r.st||'auto';
-  $('panel').innerHTML=`<div class="ph"><button class="x" id="px" aria-label="Fermer">×</button><span class="crumb">${id?esc(id)+' · modification':'Nouvelle action'}</span><h2>${id?'Modifier l’action':'Ajouter une action'}</h2></div>
+  $('panel').innerHTML=`<div class="ph"><button class="x" id="px" aria-label="Fermer">×</button><span class="crumb">${id?esc(id)+' · modification':'Nouvelle action'}</span><h2>${id?'Modifier l’action':presetT?'Ajouter une tâche d’équipe':'Ajouter une action'}</h2></div>
   <form class="pb ef" id="editForm" novalidate>
     <p class="warn" id="conflict" hidden></p>
     <label>Libellé<textarea name="a" rows="3" required>${esc(r.a)}</textarea></label>
@@ -817,6 +844,7 @@ function openEdit(id,presetCh){
     <div class="two"><label>Porteur<input name="p" list="pList" value="${esc(r.p)}" placeholder="Ex. PMO / RH"></label>
     <label>Criticité<select name="c">${[['','Non renseignée'],['Haute','Haute'],['Moyenne','Moyenne'],['Basse','Basse']].map(([v,l])=>`<option value="${v}"${v===r.c?' selected':''}>${l}</option>`).join('')}</select></label></div>
     <datalist id="pList">${porteurs().map(p=>`<option value="${esc(p)}">`).join('')}</datalist>
+    <label>Affectée à <small>(todo équipe)</small><select name="t">${teamOpts(r.t)}</select></label>
     <label>Statut<select name="st"><option value="auto"${cur==='auto'?' selected':''}>Selon les dates (à venir, en cours, dépassée)</option><option value="bloque"${cur==='bloque'?' selected':''}>Bloqué</option><option value="fait"${cur==='fait'?' selected':''}>Fait</option></select></label>
     <label id="mWrap"${cur==='bloque'?'':' hidden'}>Motif du blocage<textarea name="m" rows="2" placeholder="Ex. en attente de la validation du CFO">${esc(r.m||'')}</textarea></label>
     <label class="chk"><input type="checkbox" name="ms"${ms?' checked':''}> Jalon (une seule date)</label>
@@ -827,7 +855,7 @@ function openEdit(id,presetCh){
     <p class="err" id="err" role="alert"></p>
     <div class="pact"><button type="submit" class="btn primary">${id?'Enregistrer les modifications':'Ajouter l’action'}</button><button type="button" class="btn" id="cancelEdit">Annuler</button></div>
   </form>`;
-  showPanel(id?'Modifier l’action':'Ajouter une action');
+  showPanel(id?'Modifier l’action':presetT?'Ajouter une tâche d’équipe':'Ajouter une action');
   const f=$('editForm');f.dataset.base=id?JSON.stringify(r):'';
   $('px').onclick=closePanel;
   $('cancelEdit').onclick=()=>id&&byId(id)?openPanel(id):closePanel();
@@ -850,16 +878,16 @@ function openEdit(id,presetCh){
     if(en<s){$('err').textContent='La date de fin doit être postérieure ou égale au début.';f.e.focus();return}
     if(en>MAXD){$('err').textContent='La date de fin doit être avant le 31 décembre.';f.e.focus();return}
     const v={a,ch:f.ch.value,br:f.br.value.trim()||'Divers',p:f.p.value.trim(),c:f.c.value,s,e:en};
-    const stv=f.st.value,mv=f.m.value.trim();
+    const stv=f.st.value,mv=f.m.value.trim(),tv=f.t.value;
     const applySt=x=>{if(stv==='fait'){x.st='fait';delete x.m;delete x.bat}else if(stv==='bloque'){if(x.st!=='bloque')x.bat=Date.now();x.st='bloque';x.m=mv}else{delete x.st;delete x.m;delete x.bat}};
     const applyDeps=x=>{const d=deps.filter(byId);if(d.length)x.d=d;else delete x.d};
     if(id){
       const cur=byId(id);if(!cur){$('err').textContent='Cette action a été supprimée par un autre utilisateur.';return}
       let n=0;
-      mutate(()=>`${id} modifiée${depNote(n)}`,()=>{const k=v.e-cur.e;Object.assign(cur,v);applySt(cur);applyDeps(cur);n=shiftDeps(id,k)},id);openPanel(id);
+      mutate(()=>`${id} modifiée${depNote(n)}`,()=>{const k=v.e-cur.e;Object.assign(cur,v);applySt(cur);applyDeps(cur);assign(cur,tv);n=shiftDeps(id,k)},id);openPanel(id);
     }else{
       const nid=nextId(v.ch),o=Math.max(0,...ITEMS.map(x=>x.o||0))+1;
-      mutate(`${nid} ajoutée (${v.a})`,()=>{const x={id:nid,...v,o};applySt(x);applyDeps(x);ITEMS.push(x);S.collapsed.delete(v.ch)},nid);
+      mutate(`${nid} ajoutée (${v.a})`,()=>{const x={id:nid,...v,o};applySt(x);applyDeps(x);assign(x,tv);ITEMS.push(x);S.collapsed.delete(v.ch)},nid);
       openPanel(nid);
       const el=document.querySelector(`.al[data-open="${nid}"]`);if(el)el.scrollIntoView({block:'center',behavior:'smooth'});
     }};
@@ -944,7 +972,7 @@ document.addEventListener('click',e=>{
 const tip=$('tip');
 document.addEventListener('pointerover',e=>{if(drag)return;const t=e.target.closest('.tc [data-id]');if(!t){tip.classList.remove('on');return}
   const r=byId(t.dataset.id);if(!r)return;
-  tip.innerHTML=`<b>${esc(r.a)}</b><span>${esc(r.id)} · ${esc(r.p)} · ${range(r)} · ${ST[status(r)]}</span>${status(r)==='bloque'&&r.m?`<span class="tiph">Motif : ${esc(r.m)}</span>`:''}${r.by&&r.at?`<span class="tiph">Modifiée par ${esc(r.by)}, ${esc(when(r.at))}</span>`:''}<span class="tiph">Glisser pour déplacer${r.s!==r.e?', tirer un bord pour changer une date':''}</span>`;tip.classList.add('on')});
+  tip.innerHTML=`<b>${esc(r.a)}</b><span>${esc(r.id)} · ${esc(r.p)} · ${range(r)} · ${ST[status(r)]}</span>${r.t?`<span class="tiph">Affectée à ${esc(nameOf(r))}</span>`:''}${status(r)==='bloque'&&r.m?`<span class="tiph">Motif : ${esc(r.m)}</span>`:''}${r.by&&r.at?`<span class="tiph">Modifiée par ${esc(r.by)}, ${esc(when(r.at))}</span>`:''}<span class="tiph">Glisser pour déplacer${r.s!==r.e?', tirer un bord pour changer une date':''}</span>`;tip.classList.add('on')});
 document.addEventListener('pointermove',e=>{if(drag||!tip.classList.contains('on'))return;const w=tip.offsetWidth,x=Math.min(e.clientX+14,innerWidth-w-8);tip.style.left=x+'px';tip.style.top=(e.clientY+16)+'px'});
 document.addEventListener('scroll',()=>{if(!drag)tip.classList.remove('on')},true);
 
@@ -953,28 +981,35 @@ function download(text,type,name){const blob=new Blob([text],{type});const a=doc
 function exportCSV(){
   const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
   const d=x=>dt(x).toLocaleDateString('fr-FR');
-  const lines=[['ID','Chantier','Sous-chantier','Action','Porteur','Criticité','Début','Fin','Statut','Motif de blocage','Modification','Modifiée par','Modifiée le','Dépend de'].map(q).join(';')];
-  ordered(ITEMS).forEach(r=>lines.push([r.id,r.ch,r.br,r.a,r.p,r.c,d(r.s),d(r.e),ST[status(r)],r.st==='bloque'?r.m:'',isNew(r)?'Ajoutée':isMod(r)?'Modifiée':'',r.by||'',r.at?new Date(r.at).toLocaleString('fr-FR'):'',(r.d||[]).join(', ')].map(q).join(';')));
-  Object.values(ORIG).filter(r=>!byId(r.id)).forEach(r=>lines.push([r.id,r.ch,r.br,r.a,r.p,r.c,d(r.s),d(r.e),'','','Supprimée','','',''].map(q).join(';')));
+  const lines=[['ID','Chantier','Sous-chantier','Action','Porteur','Criticité','Début','Fin','Statut','Motif de blocage','Modification','Modifiée par','Modifiée le','Dépend de','Affectée à'].map(q).join(';')];
+  ordered(ITEMS).forEach(r=>lines.push([r.id,r.ch,r.br,r.a,r.p,r.c,d(r.s),d(r.e),ST[status(r)],r.st==='bloque'?r.m:'',isNew(r)?'Ajoutée':isMod(r)?'Modifiée':'',r.by||'',r.at?new Date(r.at).toLocaleString('fr-FR'):'',(r.d||[]).join(', '),nameOf(r)].map(q).join(';')));
+  Object.values(ORIG).filter(r=>!byId(r.id)).forEach(r=>lines.push([r.id,r.ch,r.br,r.a,r.p,r.c,d(r.s),d(r.e),'','','Supprimée','','','',''].map(q).join(';')));
   download('\ufeff'+lines.join('\r\n'),'text/csv;charset=utf-8','Planning_demarrage_vague_1_'+new Date().toISOString().slice(0,10)+'.csv');
   toast('Export CSV téléchargé');
 }
 /* Compte rendu : brouillon Outlook (.eml) avec les échéances de la semaine (filtres actifs respectés) */
 function exportMail(){
   const d=x=>dt(x).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
-  const rows=ITEMS.filter(r=>baseMatch(r)&&thisWeek(r)).sort((a,b)=>rank(a)-rank(b)||a.e-b.e||a.id.localeCompare(b.id,'fr',{numeric:true}));
-  const th='style="border:1px solid #bfbfbf;padding:6px 10px;background:#1f3864;color:#fff;text-align:left"',td='style="border:1px solid #bfbfbf;padding:6px 10px;vertical-align:top"';
+  const byPrio=(a,b)=>rank(a)-rank(b)||a.e-b.e||a.id.localeCompare(b.id,'fr',{numeric:true});
+  const rows=ITEMS.filter(r=>baseMatch(r)&&thisWeek(r)).sort(byPrio);
+  const late=ITEMS.filter(r=>baseMatch(r)&&status(r)==='retard').sort((a,b)=>a.e-b.e||byPrio(a,b));
+  const th='style="border:1px solid #bfbfbf;padding:6px 10px;background:#1f3864;color:#fff;text-align:left"',thL='style="border:1px solid #bfbfbf;padding:6px 10px;background:#c00000;color:#fff;text-align:left"',td='style="border:1px solid #bfbfbf;padding:6px 10px;vertical-align:top"';
   const table=rows.length?`<table style="border-collapse:collapse;font:10pt Calibri,Arial,sans-serif"><tr><th ${th}>Action</th><th ${th}>Responsable</th><th ${th}>Échéance</th></tr>`
     +rows.map(r=>`<tr><td ${td}><b>${esc(r.id)}</b> – ${esc(r.a)}</td><td ${td}>${esc(r.p)}</td><td ${td}>${esc(d(r.e))}</td></tr>`).join('')+'</table>'
     :'<p><i>Aucune action ouverte avec une échéance cette semaine.</i></p>';
+  const lateTable=late.length?`<table style="border-collapse:collapse;font:10pt Calibri,Arial,sans-serif"><tr><th ${thL}>Action</th><th ${thL}>Responsable</th><th ${thL}>Échéance</th><th ${thL}>Retard</th></tr>`
+    +late.map(r=>{const j=S.T-r.e;return `<tr><td ${td}><b>${esc(r.id)}</b> – ${esc(r.a)}</td><td ${td}>${esc(r.p)}</td><td ${td}>${esc(d(r.e))}</td><td ${td}>${j} jour${j>1?'s':''}</td></tr>`}).join('')+'</table>'
+    :'<p><i>Aucune échéance dépassée.</i></p>';
   const html=`<html><head><meta charset="utf-8"></head><body style="font:11pt Calibri,Arial,sans-serif">`
-    +`<p>Bonjour à tous,</p><p>Comme convenu, voici le récapitulatif des actions ouvertes de la semaine (échéances du ${esc(d(S.T))} au ${esc(d(friday()))}). Merci de bien vouloir maintenir leur intégration en début de support, avec responsable et échéance.</p>`
-    +table+'<p>Bien cordialement,</p></body></html>';
+    +`<p>Bonjour à tous,</p><p>Comme convenu, voici le récapitulatif des actions ouvertes de la semaine (échéances du ${esc(d(S.T))} au ${esc(d(friday()))}), ainsi que les actions dont l’échéance est dépassée. Merci de bien vouloir maintenir leur intégration en début de support, avec responsable et échéance.</p>`
+    +`<p><b>Actions de la semaine</b></p>`+table
+    +`<p><b style="color:#c00000">Échéances dépassées, non soldées (${late.length})</b></p>`+lateTable
+    +'<p>Bien cordialement,</p></body></html>';
   const b64=s=>{const u=new TextEncoder().encode(s);let t='';u.forEach(c=>t+=String.fromCharCode(c));return btoa(t)};
-  const subject=`Compte rendu – actions de la semaine (jusqu’au ${fmt(friday())})`;
+  const subject=`Compte rendu – actions de la semaine (jusqu’au ${fmt(friday())}) et échéances dépassées`;
   const eml=['X-Unsent: 1','Subject: '+subject.match(/.{1,15}/gu).map(p=>'=?UTF-8?B?'+b64(p)+'?=').join('\r\n '),'MIME-Version: 1.0','Content-Type: text/html; charset=UTF-8','Content-Transfer-Encoding: base64','',b64(html).replace(/.{76}/g,'$&\r\n')].join('\r\n');
   download(eml,'message/rfc822','Compte_rendu_vague_1_'+toISO(S.T)+'.eml');
-  toast(`Brouillon téléchargé (${rows.length} action${rows.length>1?'s':''}) : ouvrez-le pour l’afficher dans Outlook`);
+  toast(`Brouillon téléchargé (${rows.length} action${rows.length>1?'s':''} de la semaine, ${late.length} en retard) : ouvrez-le pour l’afficher dans Outlook`);
 }
 async function readPlanningFile(file){
   try{const o=JSON.parse(await file.text());const raw=Array.isArray(o)?o:o.items;if(!Array.isArray(raw))throw new Error('format');
@@ -1076,6 +1111,7 @@ const H={
     if(PANEL.mode==='hist')openHistory(true)},
   onPresence:list=>{PRESENCE=list;const others=list.filter(p=>p.u!==BE.uid);
     $('presence').innerHTML=BE.shared?(others.length?`<span class="avs">${others.slice(0,5).map(p=>`<span class="av" title="${esc(p.n)}">${esc(p.n.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span>`).join('')}</span><span>${others.length===1?esc(others[0].n)+' est aussi connecté(e)':others.length+' autres personnes connectées'}</span>`:'<span>Vous êtes seul(e) connecté(e)</span>'):''},
+  onMembers:list=>{MEMBRES=list;if(READY){update();if(PANEL.mode==='item')refreshPanel()}},
   onConn:on=>{const c=$('conn');c.className='conn '+(on?'on':'off');c.textContent=BE.shared?(on?'Synchronisé en temps réel':'Hors connexion : vos modifications seront envoyées au retour du réseau'):'Mode local : les modifications restent dans ce navigateur'},
   onReady:()=>{READY=true;first=true;
     if(!ITEMS.length&&!Object.keys(ORIG).length){gate('seed');return}
