@@ -657,11 +657,11 @@ function toast(msg,opt={}){
 const status=r=>r.st==='fait'?'fait':r.st==='bloque'?'bloque':r.e<S.T?'retard':r.s<=S.T?'cours':'venir';
 const friday=()=>{const f=S.T-((dt(S.T).getDay()+6)%7)+4;return f<S.T?f+7:f};
 const thisWeek=r=>r.st!=='fait'&&r.e>=S.T&&r.e<=friday();
-function baseMatch(r){
+function baseMatch(r,noTodo){
   if(S.crit!=='Toutes'&&r.c!==S.crit)return false;
   if(S.chs.size&&!S.chs.has(r.ch))return false;
   if(S.porteur&&!splitP(r.p).includes(S.porteur))return false;
-  if(S.todo&&!(S.todo==='-'?!r.t:S.todo==='*'?r.t:r.t===S.todo))return false;
+  if(noTodo!==true&&S.todo&&!(S.todo==='-'?!r.t:S.todo==='*'?r.t:r.t===S.todo))return false;
   if(S.q){const h=(r.id+' '+r.a+' '+r.p+' '+r.br+' '+r.ch+' '+(r.m||'')+' '+nameOf(r)).toLowerCase();if(!S.q.split(/\s+/).every(w=>h.includes(w)))return false}
   return true}
 function statusMatch(r){if(!S.status)return true;if(S.status==='semaine')return thisWeek(r);if(S.status==='modif')return isMod(r)||isNew(r);return status(r)===S.status}
@@ -1010,8 +1010,10 @@ function exportCSV(){
 function exportMail(){
   const d=x=>dt(x).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
   const byPrio=(a,b)=>rank(a)-rank(b)||a.e-b.e||a.id.localeCompare(b.id,'fr',{numeric:true});
-  const rows=ITEMS.filter(r=>baseMatch(r)&&thisWeek(r)).sort(byPrio);
-  const late=ITEMS.filter(r=>baseMatch(r)&&status(r)==='retard').sort((a,b)=>a.e-b.e||byPrio(a,b));
+  /* Uniquement les actions programme (non affectées à un membre de l'équipe), quel que soit le filtre Todo équipe */
+  const prog=r=>!r.t&&baseMatch(r,true);
+  const rows=ITEMS.filter(r=>prog(r)&&thisWeek(r)).sort(byPrio);
+  const late=ITEMS.filter(r=>prog(r)&&status(r)==='retard').sort((a,b)=>a.e-b.e||byPrio(a,b));
   const th='style="border:1px solid #bfbfbf;padding:6px 10px;background:#1f3864;color:#fff;text-align:left"',thL='style="border:1px solid #bfbfbf;padding:6px 10px;background:#c00000;color:#fff;text-align:left"',td='style="border:1px solid #bfbfbf;padding:6px 10px;vertical-align:top"';
   const table=rows.length?`<table style="border-collapse:collapse;font:10pt Calibri,Arial,sans-serif"><tr><th ${th}>Action</th><th ${th}>Responsable</th><th ${th}>Échéance</th></tr>`
     +rows.map(r=>`<tr><td ${td}><b>${esc(r.id)}</b> – ${esc(r.a)}</td><td ${td}>${esc(r.p)}</td><td ${td}>${esc(d(r.e))}</td></tr>`).join('')+'</table>'
@@ -1020,7 +1022,7 @@ function exportMail(){
     +late.map(r=>{const j=S.T-r.e;return `<tr><td ${td}><b>${esc(r.id)}</b> – ${esc(r.a)}</td><td ${td}>${esc(r.p)}</td><td ${td}>${esc(d(r.e))}</td><td ${td}>${j} jour${j>1?'s':''}</td></tr>`}).join('')+'</table>'
     :'<p><i>Aucune échéance dépassée.</i></p>';
   const html=`<html><head><meta charset="utf-8"></head><body style="font:11pt Calibri,Arial,sans-serif">`
-    +`<p>Bonjour à tous,</p><p>Comme convenu, voici le récapitulatif des actions ouvertes de la semaine (échéances du ${esc(d(S.T))} au ${esc(d(friday()))}), ainsi que les actions dont l’échéance est dépassée. Merci de bien vouloir maintenir leur intégration en début de support, avec responsable et échéance.</p>`
+    +`<p>Bonjour à tous,</p><p>Comme convenu, voici le récapitulatif des actions programme ouvertes de la semaine (échéances du ${esc(d(S.T))} au ${esc(d(friday()))}), ainsi que les actions dont l’échéance est dépassée. Merci de bien vouloir maintenir leur intégration en début de support, avec responsable et échéance.</p>`
     +`<p><b>Actions de la semaine</b></p>`+table
     +`<p><b style="color:#c00000">Échéances dépassées, non soldées (${late.length})</b></p>`+lateTable
     +'<p>Bien cordialement,</p></body></html>';
