@@ -351,7 +351,15 @@ button.hrow:hover{background:var(--hover)}
 body.ro #addBtn,body.ro #teamAddBtn,body.ro #mailBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
 body.ro .bar,body.ro .dia{cursor:pointer}
 /* Todo équipe : actions affectées à un membre */
-#todoBtn[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+body:not(.admin) #rapBtn{display:none!important}
+.rapl{display:grid;gap:10px;list-style:none;margin:0;padding:0}
+.rapl li{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:8px}
+.rapl .rh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rapl .rh b{flex:1}
+.rapl input[type=email]{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);width:100%}
+.rapl .late{font-size:12.5px;color:var(--late)}
+.rapl .muted{font-size:12.5px}
+#todoBtn[aria-pressed=true],#unBtn[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .asg{font-weight:600;color:var(--fg)}
 .rotag{font-size:12.5px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 #app[hidden]{display:none}
@@ -405,6 +413,7 @@ window.FIREBASE_CONFIG = {
     <button class="btn" id="critBtn" aria-pressed="false" title="Regrouper les actions de criticité Haute dans un bloc séparé, en haut du planning">Actions critiques à part</button>
     <button class="btn" id="todoBtn" aria-pressed="false" title="N’afficher que les actions affectées à un membre de l’équipe">Todo équipe</button>
     <select id="todoWho" aria-label="Membre de l’équipe" hidden></select>
+    <button class="btn" id="unBtn" aria-pressed="false" title="N’afficher que les actions du programme (non affectées à un membre de l’équipe)">Actions programme</button>
     <span class="sp"></span>
     <label class="zoom" id="zoomWrap">Zoom <input type="range" id="zoom" min="26" max="72" value="40"></label>
     <button class="btn" id="foldAll">Tout replier</button>
@@ -412,6 +421,7 @@ window.FIREBASE_CONFIG = {
     <button class="btn" id="teamAddBtn" title="Créer une action affectée à un membre de l’équipe">+ Tâche d’équipe</button>
     <button class="btn" id="exportBtn">Exporter (CSV)</button>
     <button class="btn" id="mailBtn">Compte rendu (mail)</button>
+    <button class="btn" id="rapBtn" title="Rappels par mail aux membres dont des actions affectées sont en retard">Rappels</button>
     <button class="btn" id="reset" disabled>Réinitialiser les filtres</button>
     <button class="btn" id="histBtn">Historique<span class="hc" id="histCount"></span></button>
     <span class="saved" id="saved" role="status" aria-live="polite"></span>
@@ -486,7 +496,7 @@ const splitP=p=>String(p||'').split('/').map(x=>x.trim()).filter(Boolean);
 const porteurs=()=>[...new Set(ITEMS.flatMap(r=>splitP(r.p)))].sort((a,b)=>a.localeCompare(b,'fr'));
 const byId=id=>ITEMS.find(x=>x.id===id);
 /* Équipe : membres du site (/membres), complétés par les personnes déjà affectées (visibles aussi des lecteurs) */
-let MEMBRES=[];
+let MEMBRES=[],RAPPELS={};/* RAPPELS (administrateur seulement) : {uid:{on,email,dernier}} */
 const team=()=>{const m=new Map(MEMBRES.map(x=>[x.uid,x.name]));ITEMS.forEach(r=>{if(r.t&&!m.has(r.t))m.set(r.t,r.tn||'?')});return [...m].map(([uid,name])=>({uid,name})).sort((a,b)=>a.name.localeCompare(b.name,'fr'))};
 const nameOf=r=>r.t?((MEMBRES.find(x=>x.uid===r.t)||{}).name||r.tn||'?'):'';
 
@@ -494,7 +504,7 @@ const realToday=(()=>{const n=new Date();return Math.round((new Date(n.getFullYe
 const defT=realToday>=0&&realToday<N?realToday:2;
 
 /* Préférences d'affichage : propres à chaque utilisateur (ce navigateur) */
-const S={view:'gantt',T:defT,crit:'Toutes',q:'',porteur:'',chs:new Set(),status:null,collapsed:new Set(),critBlock:false,todo:''};/* todo : '' (inactif), '*' (toute l'équipe) ou UID d'un membre */
+const S={view:'gantt',T:defT,crit:'Toutes',q:'',porteur:'',chs:new Set(),status:null,collapsed:new Set(),critBlock:false,todo:''};/* todo : '' (inactif), '*' (toute l'équipe), '-' (actions programme, non affectées) ou UID d'un membre */
 const PANEL={mode:null,id:null};
 const PREF_KEY='planning-v1-prefs';
 let prefTimer=null,restoredZoom=false;
@@ -530,10 +540,11 @@ function LocalBackend(){
   const K='planning-v1-localdb';let H;
   const read=()=>{try{return JSON.parse(localStorage.getItem(K)||'{}')}catch(e){return {}}};
   const save=db=>{try{localStorage.setItem(K,JSON.stringify(db));return true}catch(e){return false}};
-  const emit=()=>{const db=read();H.onOrig(db.orig||{});H.onItems(db.items||{});H.onJournal(db.journal||[])};
+  const emit=()=>{const db=read();H.onOrig(db.orig||{});H.onItems(db.items||{});H.onJournal(db.journal||[]);H.onRappels(db.rappels||{})};
   const jr=(db,msg,id)=>{db.journal=(db.journal||[]).concat({k:String(Date.now())+Math.random().toString(36).slice(2,6),at:Date.now(),by:'Vous',u:'local',msg,id:id||''}).slice(-200)};
-  const B={shared:false,uid:'local',name:'Vous',
-    async start(h){H=h;h.onConn(true);h.onPresence([]);h.onMembers([{uid:'local',name:'Vous'}]);addEventListener('storage',e=>{if(e.key===K)emit()});emit();h.onReady()},
+  const B={shared:false,uid:'local',name:'Vous',admin:true,
+    async setRappel(uid,patch){const db=read();db.rappels=db.rappels||{};db.rappels[uid]={...(db.rappels[uid]||{}),...patch};if(!save(db))throw new Error('Le stockage de ce navigateur est indisponible.');emit()},
+    async start(h){H=h;h.onConn(true);h.onPresence([]);h.onMembers([{uid:'local',name:'Vous'}]);document.body.classList.add('admin');addEventListener('storage',e=>{if(e.key===K)emit()});emit();h.onReady()},
     async write(patch,msg,id){const db=read();db.items=db.items||{};for(const k in patch){if(patch[k]===null)delete db.items[KEYOF(k)];else db.items[KEYOF(k)]=patch[k]}jr(db,msg,id);if(!save(db))throw new Error('Le stockage de ce navigateur est indisponible.');emit()},
     async seed(obj){const db={items:obj,orig:obj};jr(db,`Planning initial importé (${Object.keys(obj).length} actions)`);if(!save(db))throw new Error('Le stockage de ce navigateur est indisponible.');emit()},
     async replaceAll(obj,msg){const db=read();db.items=obj;jr(db,msg);if(!save(db))throw new Error('Le stockage de ce navigateur est indisponible.');emit()},
@@ -560,6 +571,8 @@ function FirebaseBackend(){
         const sm=await look('membres'),sl=sm?null:await look('lecteurs');
         if(!sm&&!sl){h.onGate('denied',{uid:user.uid,email:user.email});return}
         B.ro=!sm;name=(sm||sl).val();
+        /* Administrateur (rappels) : UID présent sous /admins, renseigné dans la console Firebase */
+        B.admin=!B.ro&&!!(await look('admins'));
         B.name=typeof name==='string'&&name.trim()?name.trim():(typeof name==='object'&&name&&name.nom)?String(name.nom):B.email.split('@')[0];
         h.onUser({name:B.name,email:B.email});
         const err=e=>{console.error(e);h.onError(e)};
@@ -568,6 +581,7 @@ function FirebaseBackend(){
         unsubs.push(fd.onValue(fd.ref(db,'planning/orig'),s=>{h.onOrig(s.val()||{});if(!got.orig)ready('orig')},err));
         unsubs.push(fd.onValue(fd.ref(db,'planning/items'),s=>{h.onItems(s.val()||{});if(!got.items)ready('items')},err));
         if(!B.ro)unsubs.push(fd.onValue(fd.query(fd.ref(db,'planning/journal'),fd.limitToLast(150)),s=>{const v=s.val()||{};h.onJournal(Object.keys(v).sort().map(k=>({k,...v[k]})))},err));
+        if(B.admin)unsubs.push(fd.onValue(fd.ref(db,'rappels'),s=>h.onRappels(s.val()||{}),e=>console.error(e)));
         /* Équipe affectable (todo) : liste des membres, lisible par les membres uniquement */
         if(!B.ro)unsubs.push(fd.onValue(fd.ref(db,'membres'),s=>{const v=s.val()||{};h.onMembers(Object.entries(v).map(([uid,n])=>({uid,name:typeof n==='string'&&n.trim()?n.trim():(n&&typeof n==='object'&&n.nom)?String(n.nom):uid.slice(0,6)})))},e=>console.error(e)));
         unsubs.push(fd.onValue(fd.ref(db,'planning/presence'),s=>{const v=s.val()||{};h.onPresence(Object.entries(v).map(([u,x])=>({u,n:(x&&x.n)||'?'})))},err));
@@ -581,6 +595,7 @@ function FirebaseBackend(){
     write(patch,msg,id){const up={};for(const k in patch)up['planning/items/'+KEYOF(k)]=patch[k];B.journalEntry(up,msg,id);return fd.update(fd.ref(db),up)},
     seed(obj){const up={'planning/items':obj,'planning/orig':obj,'planning/meta':{importeLe:fd.serverTimestamp(),par:B.name}};B.journalEntry(up,`Planning initial importé (${Object.keys(obj).length} actions)`);return fd.update(fd.ref(db),up)},
     replaceAll(obj,msg){const up={'planning/items':obj};B.journalEntry(up,msg);return fd.update(fd.ref(db),up)},
+    setRappel(uid,patch){return fd.update(fd.ref(db,'rappels/'+uid),patch)},
     async logout(){try{await fd.remove(fd.ref(db,'planning/presence/'+B.uid))}catch(e){}await fu.signOut(auth);location.reload()}};
   return B}
 
@@ -646,7 +661,7 @@ function baseMatch(r){
   if(S.crit!=='Toutes'&&r.c!==S.crit)return false;
   if(S.chs.size&&!S.chs.has(r.ch))return false;
   if(S.porteur&&!splitP(r.p).includes(S.porteur))return false;
-  if(S.todo&&!(S.todo==='*'?r.t:r.t===S.todo))return false;
+  if(S.todo&&!(S.todo==='-'?!r.t:S.todo==='*'?r.t:r.t===S.todo))return false;
   if(S.q){const h=(r.id+' '+r.a+' '+r.p+' '+r.br+' '+r.ch+' '+(r.m||'')+' '+nameOf(r)).toLowerCase();if(!S.q.split(/\s+/).every(w=>h.includes(w)))return false}
   return true}
 function statusMatch(r){if(!S.status)return true;if(S.status==='semaine')return thisWeek(r);if(S.status==='modif')return isMod(r)||isNew(r);return status(r)===S.status}
@@ -667,7 +682,9 @@ const critBox=$('crit');
 ['Toutes','Haute','Moyenne','Basse'].forEach(c=>{const b=document.createElement('button');b.textContent=c;b.dataset.c=c;b.onclick=()=>{S.crit=c;update()};critBox.appendChild(b)});
 $('porteur').onchange=e=>{S.porteur=e.target.value;update()};
 $('critBtn').onclick=()=>{S.critBlock=!S.critBlock;update()};
-$('todoBtn').onclick=()=>{S.todo=S.todo?'':'*';update()};
+$('todoBtn').onclick=()=>{S.todo=S.todo&&S.todo!=='-'?'':'*';update()};
+$('unBtn').onclick=()=>{S.todo=S.todo==='-'?'':'-';update()};
+$('rapBtn').onclick=()=>openRappels();
 $('todoWho').onchange=e=>{S.todo=e.target.value||'*';update()};
 $('teamAddBtn').onclick=()=>openEdit(null,null,BE.uid);
 $('q').addEventListener('input',e=>{S.q=e.target.value.toLowerCase().trim();update()});
@@ -705,10 +722,12 @@ function renderTop(){
   $('kpis').querySelectorAll('.kpi').forEach(b=>b.onclick=()=>{S.status=S.status===b.dataset.k?null:b.dataset.k;update()});
   critBox.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.c===S.crit));
   $('critBtn').setAttribute('aria-pressed',S.critBlock);
-  const TM=team();if(S.todo&&S.todo!=='*'&&!TM.some(m=>m.uid===S.todo))S.todo='*';
-  const nT=ITEMS.filter(r=>r.t).length;
-  $('todoBtn').setAttribute('aria-pressed',!!S.todo);$('todoBtn').textContent=`Todo équipe${nT?' ('+nT+')':''}`;
-  $('todoWho').hidden=!S.todo;
+  const TM=team();if(S.todo&&S.todo!=='*'&&S.todo!=='-'&&!TM.some(m=>m.uid===S.todo))S.todo='*';
+  const nT=ITEMS.filter(r=>r.t).length,team1=!!S.todo&&S.todo!=='-';
+  $('todoBtn').setAttribute('aria-pressed',team1);$('todoBtn').textContent=`Todo équipe${nT?' ('+nT+')':''}`;
+  $('unBtn').setAttribute('aria-pressed',S.todo==='-');$('unBtn').textContent=`Actions programme (${ITEMS.length-nT})`;
+  $('todoWho').hidden=!team1;
+  if(BE.admin){const n=dueReminders().length;$('rapBtn').textContent=`Rappels${n?' ('+n+')':''}`}
   $('todoWho').innerHTML='<option value="*">Toute l’équipe</option>'+TM.map(m=>`<option value="${esc(m.uid)}"${m.uid===S.todo?' selected':''}>${esc(m.uid===BE.uid?m.name+' (moi)':m.name)} – ${ITEMS.filter(r=>r.t===m.uid).length}</option>`).join('');
   document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===S.view));
   const P=porteurs();if(S.porteur&&!P.includes(S.porteur))S.porteur='';
@@ -785,7 +804,7 @@ function renderBoard(rows){
 function showPanel(label){const p=$('panel');p.classList.add('open');p.setAttribute('aria-hidden','false');p.setAttribute('aria-label',label);$('scrim').classList.add('open')}
 function markSel(id){document.querySelectorAll('.a.sel').forEach(e=>e.classList.remove('sel'));const b=id&&document.querySelector(`.al[data-open="${id}"]`);if(b)b.closest('.a').classList.add('sel')}
 function closePanel(){PANEL.mode=null;PANEL.id=null;$('panel').classList.remove('open');$('panel').setAttribute('aria-hidden','true');$('scrim').classList.remove('open');markSel(null)}
-function refreshPanel(){if(PANEL.mode==='item'){byId(PANEL.id)?openPanel(PANEL.id):closePanel()}else if(PANEL.mode==='hist')openHistory(true)}
+function refreshPanel(){if(PANEL.mode==='item'){byId(PANEL.id)?openPanel(PANEL.id):closePanel()}else if(PANEL.mode==='hist')openHistory(true);else if(PANEL.mode==='rap'&&!(document.activeElement&&document.activeElement.matches('.rapl [data-em]')))openRappels(true)}
 
 function openPanel(id){
   const r=byId(id);if(!r)return;PANEL.mode='item';PANEL.id=id;
@@ -1005,11 +1024,62 @@ function exportMail(){
     +`<p><b>Actions de la semaine</b></p>`+table
     +`<p><b style="color:#c00000">Échéances dépassées, non soldées (${late.length})</b></p>`+lateTable
     +'<p>Bien cordialement,</p></body></html>';
-  const b64=s=>{const u=new TextEncoder().encode(s);let t='';u.forEach(c=>t+=String.fromCharCode(c));return btoa(t)};
   const subject=`Compte rendu – actions de la semaine (jusqu’au ${fmt(friday())}) et échéances dépassées`;
-  const eml=['X-Unsent: 1','Subject: '+subject.match(/.{1,15}/gu).map(p=>'=?UTF-8?B?'+b64(p)+'?=').join('\r\n '),'MIME-Version: 1.0','Content-Type: text/html; charset=UTF-8','Content-Transfer-Encoding: base64','',b64(html).replace(/.{76}/g,'$&\r\n')].join('\r\n');
-  download(eml,'message/rfc822','Compte_rendu_vague_1_'+toISO(S.T)+'.eml');
+  download(makeEml(subject,html),'message/rfc822','Compte_rendu_vague_1_'+toISO(S.T)+'.eml');
   toast(`Brouillon téléchargé (${rows.length} action${rows.length>1?'s':''} de la semaine, ${late.length} en retard) : ouvrez-le pour l’afficher dans Outlook`);
+}
+/* Brouillon Outlook (.eml, non envoyé) ; `to` facultatif */
+const b64=s=>{const u=new TextEncoder().encode(s);let t='';u.forEach(c=>t+=String.fromCharCode(c));return btoa(t)};
+const makeEml=(subject,html,to)=>[...(to?['To: '+to]:[]),'X-Unsent: 1','Subject: '+subject.match(/.{1,15}/gu).map(p=>'=?UTF-8?B?'+b64(p)+'?=').join('\r\n '),'MIME-Version: 1.0','Content-Type: text/html; charset=UTF-8','Content-Transfer-Encoding: base64','',b64(html).replace(/.{76}/g,'$&\r\n')].join('\r\n');
+
+/* =====================================================================
+   Rappels (administrateur uniquement) : activés membre par membre ; un brouillon par membre
+   reprend ses actions affectées dont l'échéance est dépassée à la date réelle du jour.
+   Un rappel est « à relancer » tant qu'il n'a pas été préparé aujourd'hui.
+   ===================================================================== */
+const lateFor=uid=>ITEMS.filter(r=>r.t===uid&&!r.st&&r.e<realToday).sort((a,b)=>a.e-b.e||a.id.localeCompare(b.id,'fr',{numeric:true}));
+const dayStart=()=>{const n=new Date();return new Date(n.getFullYear(),n.getMonth(),n.getDate()).getTime()};
+const dueReminders=()=>team().filter(m=>RAPPELS[m.uid]&&RAPPELS[m.uid].on&&RAPPELS[m.uid].email&&lateFor(m.uid).length&&!((RAPPELS[m.uid].dernier||0)>=dayStart()));
+const okEmail=s=>/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(s);
+function reminderMail(m){
+  const list=lateFor(m.uid),d=x=>dt(x).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
+  const th='style="border:1px solid #bfbfbf;padding:6px 10px;background:#c00000;color:#fff;text-align:left"',td='style="border:1px solid #bfbfbf;padding:6px 10px;vertical-align:top"';
+  const url=location.origin+location.pathname;
+  const html=`<html><head><meta charset="utf-8"></head><body style="font:11pt Calibri,Arial,sans-serif"><p>Bonjour ${esc(m.name.split(/\s+/)[0])},</p>`
+    +`<p>Petit rappel : ${list.length>1?`les ${list.length} actions suivantes, qui te sont affectées, ont dépassé leur échéance`:'l’action suivante, qui t’est affectée, a dépassé son échéance'} dans le planning de démarrage de la vague 1. Peux-tu ${list.length>1?'les solder ou me donner une nouvelle date':'la solder ou me donner une nouvelle date'} ?</p>`
+    +`<table style="border-collapse:collapse;font:10pt Calibri,Arial,sans-serif"><tr><th ${th}>Action</th><th ${th}>Échéance</th><th ${th}>Retard</th></tr>`
+    +list.map(r=>{const j=realToday-r.e;return `<tr><td ${td}><b>${esc(r.id)}</b> – ${esc(r.a)}</td><td ${td}>${esc(d(r.e))}</td><td ${td}>${j} jour${j>1?'s':''}</td></tr>`}).join('')+'</table>'
+    +`<p>Le planning : <a href="${esc(url)}">${esc(url)}</a></p><p>Merci,<br>${esc(BE.name)}</p></body></html>`;
+  return makeEml(`Rappel – ${list.length} action${list.length>1?'s':''} en retard (planning vague 1)`,html,RAPPELS[m.uid].email)}
+async function prepareReminder(m){
+  const n=lateFor(m.uid).length;if(!n)return false;
+  download(reminderMail(m),'message/rfc822','Rappel_'+m.name.replace(/[^\p{L}\p{N}]+/gu,'_')+'_'+toISO(Math.max(0,Math.min(N-1,realToday)))+'.eml');
+  try{await BE.setRappel(m.uid,{dernier:Date.now()})}catch(e){console.error(e)}
+  return true}
+function openRappels(keep){
+  if(!BE.admin)return;PANEL.mode='rap';PANEL.id=null;
+  const TM=team(),due=dueReminders();
+  const last=t=>t?new Date(t).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'jamais';
+  $('panel').innerHTML=`<div class="ph"><button class="x" id="px" aria-label="Fermer">×</button><span class="crumb">Visible par vous seul(e)</span><h2>Rappels des échéances dépassées</h2></div>
+  <div class="pb">
+    <p class="muted">Activez le rappel pour chaque membre et indiquez son adresse e-mail. Dès qu’une action qui lui est affectée dépasse son échéance (et n’est ni faite ni bloquée), un rappel est à préparer ; il revient chaque jour tant que l’action reste en retard. « Préparer » télécharge un brouillon Outlook, déjà adressé, qu’il vous suffit d’ouvrir puis d’envoyer.</p>
+    ${due.length?`<div class="pact"><button class="btn primary" id="rapAll">${due.length>1?`Préparer les ${due.length} rappels du jour`:'Préparer le rappel du jour'}</button></div>`:'<p class="muted">Aucun rappel à préparer aujourd’hui.</p>'}
+    <ul class="rapl">${TM.map(m=>{const R=RAPPELS[m.uid]||{},L=lateFor(m.uid);return `<li data-u="${esc(m.uid)}">
+      <div class="rh"><b>${esc(m.name)}</b><label class="chk"><input type="checkbox" data-on${R.on?' checked':''}> Rappel activé</label></div>
+      <input type="email" data-em placeholder="adresse e-mail" value="${esc(R.email||(m.uid===BE.uid?BE.email:''))}" aria-label="E-mail de ${esc(m.name)}">
+      <span class="${L.length?'late':'muted'}">${L.length?`${L.length} action${L.length>1?'s':''} affectée${L.length>1?'s':''} en retard : ${esc(L.map(r=>r.id).join(', '))}`:'Aucune action affectée en retard'}</span>
+      <div class="rh"><span class="muted">Dernier rappel préparé : ${esc(last(R.dernier))}</span>${L.length&&R.on?`<button class="btn" data-prep>Préparer</button>`:''}</div></li>`}).join('')}</ul>
+    <p class="err" id="rerr" role="alert"></p>
+  </div>`;
+  if(!keep)showPanel('Rappels');
+  $('px').onclick=closePanel;
+  const save=async(uid,patch)=>{try{await BE.setRappel(uid,patch)}catch(e){console.error(e);$('rerr').textContent='Enregistrement impossible : '+(/permission/i.test(e.code||e.message||'')?'droits insuffisants (voir GUIDE, rappels).':(e.message||e))}};
+  $('panel').querySelectorAll('.rapl li').forEach(li=>{
+    const uid=li.dataset.u,cb=li.querySelector('[data-on]'),em=li.querySelector('[data-em]'),m=TM.find(x=>x.uid===uid);
+    cb.onchange=()=>{const e=em.value.trim();if(cb.checked&&!okEmail(e)){cb.checked=false;$('rerr').textContent=`Indiquez une adresse e-mail valide pour ${m.name}.`;em.focus();return}$('rerr').textContent='';save(uid,cb.checked?{on:true,email:e}:{on:false})};
+    em.onchange=()=>{const e=em.value.trim();if(e&&!okEmail(e)){$('rerr').textContent=`Adresse e-mail invalide pour ${m.name}.`;return}$('rerr').textContent='';save(uid,{email:e})};
+    const p=li.querySelector('[data-prep]');if(p)p.onclick=async()=>{if(await prepareReminder(m))toast(`Brouillon de rappel téléchargé pour ${m.name} : ouvrez-le puis envoyez-le`)}});
+  if($('rapAll'))$('rapAll').onclick=async()=>{const list=dueReminders();for(const m of list){await prepareReminder(m);await new Promise(r=>setTimeout(r,600))}toast(list.length>1?`${list.length} brouillons de rappel téléchargés : ouvrez-les puis envoyez-les`:'Brouillon de rappel téléchargé : ouvrez-le puis envoyez-le')};
 }
 async function readPlanningFile(file){
   try{const o=JSON.parse(await file.text());const raw=Array.isArray(o)?o:o.items;if(!Array.isArray(raw))throw new Error('format');
@@ -1100,7 +1170,7 @@ function applyRemoteItems(obj){
 }
 const H={
   onGate:(k,i)=>gate(k,i),
-  onUser:u=>{document.body.classList.toggle('ro',!!BE.ro);$('who').innerHTML=`<span class="me">${esc(u.name)}</span>${BE.ro?'<span class="rotag">Lecture seule</span>':''}<button class="lnk" id="logout">Se déconnecter</button>`;$('logout').onclick=()=>BE.logout()},
+  onUser:u=>{document.body.classList.toggle('ro',!!BE.ro);document.body.classList.toggle('admin',!!BE.admin);$('who').innerHTML=`<span class="me">${esc(u.name)}</span>${BE.ro?'<span class="rotag">Lecture seule</span>':''}<button class="lnk" id="logout">Se déconnecter</button>`;$('logout').onclick=()=>BE.logout()},
   onOrig:obj=>{ORIG=Object.fromEntries(fromObj(obj).map(r=>[r.id,r]));if(READY)update()},
   onItems:obj=>{if(drag){pendingRemote=obj;return}applyRemoteItems(obj)},
   onJournal:list=>{
@@ -1111,7 +1181,8 @@ const H={
     if(PANEL.mode==='hist')openHistory(true)},
   onPresence:list=>{PRESENCE=list;const others=list.filter(p=>p.u!==BE.uid);
     $('presence').innerHTML=BE.shared?(others.length?`<span class="avs">${others.slice(0,5).map(p=>`<span class="av" title="${esc(p.n)}">${esc(p.n.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span>`).join('')}</span><span>${others.length===1?esc(others[0].n)+' est aussi connecté(e)':others.length+' autres personnes connectées'}</span>`:'<span>Vous êtes seul(e) connecté(e)</span>'):''},
-  onMembers:list=>{MEMBRES=list;if(READY){update();if(PANEL.mode==='item')refreshPanel()}},
+  onMembers:list=>{MEMBRES=list;if(READY){update();if(PANEL.mode==='item'||PANEL.mode==='rap')refreshPanel()}},
+  onRappels:obj=>{RAPPELS=obj&&typeof obj==='object'?obj:{};if(READY){update();if(PANEL.mode==='rap')refreshPanel()}},
   onConn:on=>{const c=$('conn');c.className='conn '+(on?'on':'off');c.textContent=BE.shared?(on?'Synchronisé en temps réel':'Hors connexion : vos modifications seront envoyées au retour du réseau'):'Mode local : les modifications restent dans ce navigateur'},
   onReady:()=>{READY=true;first=true;
     if(!ITEMS.length&&!Object.keys(ORIG).length){gate('seed');return}
