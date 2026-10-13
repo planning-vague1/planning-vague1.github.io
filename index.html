@@ -348,7 +348,7 @@ button.hrow:hover{background:var(--hover)}
 .deps{display:flex;flex-wrap:wrap;gap:6px}
 .deps:empty{display:none}
 /* Lecture seule : les commandes de modification sont masquées */
-body.ro #addBtn,body.ro #teamAddBtn,body.ro #mailBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
+body.ro #addBtn,body.ro #teamAddBtn,body.ro #mailBtn,body.ro #pptBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
 body.ro .bar,body.ro .dia{cursor:pointer}
 /* Todo équipe : actions affectées à un membre */
 body:not(.admin) #rapBtn{display:none!important}
@@ -421,7 +421,8 @@ window.FIREBASE_CONFIG = {
     <button class="btn" id="teamAddBtn" title="Créer une action affectée à un membre de l’équipe">+ Tâche d’équipe</button>
     <button class="btn" id="exportBtn">Exporter (CSV)</button>
     <button class="btn" id="mailBtn">Compte rendu (mail)</button>
-    <button class="btn" id="rapBtn" title="Rappels par mail aux membres dont des actions affectées sont en retard">Rappels</button>
+    <button class="btn" id="pptBtn" title="Générer le tableau de bord sponsor (PowerPoint, 2 slides) à partir des actions programme">Slides sponsor (PPT)</button>
+    <button class="btn" id="rapBtn"title="Rappels par mail aux membres dont des actions affectées sont en retard">Rappels</button>
     <button class="btn" id="reset" disabled>Réinitialiser les filtres</button>
     <button class="btn" id="histBtn">Historique<span class="hc" id="histCount"></span></button>
     <span class="saved" id="saved" role="status" aria-live="polite"></span>
@@ -685,6 +686,7 @@ $('critBtn').onclick=()=>{S.critBlock=!S.critBlock;update()};
 $('todoBtn').onclick=()=>{S.todo=S.todo&&S.todo!=='-'?'':'*';update()};
 $('unBtn').onclick=()=>{S.todo=S.todo==='-'?'':'-';update()};
 $('rapBtn').onclick=()=>openRappels();
+$('pptBtn').onclick=()=>openSponsor();
 $('todoWho').onchange=e=>{S.todo=e.target.value||'*';update()};
 $('teamAddBtn').onclick=()=>openEdit(null,null,BE.uid);
 $('q').addEventListener('input',e=>{S.q=e.target.value.toLowerCase().trim();update()});
@@ -1082,6 +1084,134 @@ function openRappels(keep){
     em.onchange=()=>{const e=em.value.trim();if(e&&!okEmail(e)){$('rerr').textContent=`Adresse e-mail invalide pour ${m.name}.`;return}$('rerr').textContent='';save(uid,{email:e})};
     const p=li.querySelector('[data-prep]');if(p)p.onclick=async()=>{if(await prepareReminder(m))toast(`Brouillon de rappel téléchargé pour ${m.name} : ouvrez-le puis envoyez-le`)}});
   if($('rapAll'))$('rapAll').onclick=async()=>{const list=dueReminders();for(const m of list){await prepareReminder(m);await new Promise(r=>setTimeout(r,600))}toast(list.length>1?`${list.length} brouillons de rappel téléchargés : ouvrez-les puis envoyez-les`:'Brouillon de rappel téléchargé : ouvrez-le puis envoyez-le')};
+}
+/* =====================================================================
+   Slides sponsor (PowerPoint, 2 slides) générées dans le navigateur avec PptxGenJS.
+   Périmètre : actions programme (non affectées à un membre), à la date de situation.
+   Les textes libres (faits marquants, décisions attendues) restent dans ce navigateur.
+   ===================================================================== */
+const SPONSOR_KEY='planning-v1-sponsor';
+const loadPptx=()=>window.PptxGenJS?Promise.resolve():new Promise((ok,ko)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';s.onload=ok;s.onerror=()=>ko(new Error('la bibliothèque PowerPoint n’a pas pu être chargée (connexion internet ?)'));document.head.appendChild(s)});
+const dm=d=>{const t=dt(d);return String(t.getDate()).padStart(2,'0')+'/'+String(t.getMonth()+1).padStart(2,'0')};
+const dmy=d=>dm(d)+'/'+dt(d).getFullYear();
+const METEO={VERT:'00B050',ORANGE:'E07B16',ROUGE:'C00000'},MRANK={VERT:0,ORANGE:1,ROUGE:2};
+const isDecision=r=>r.s===r.e&&/^(décision|décider|statuer|valider|figer)/i.test(r.a.trim());
+function sponsorData(){
+  const T=S.T,P=ITEMS.filter(r=>!r.t),done=r=>status(r)==='fait',open=P.filter(r=>!done(r));
+  const late=P.filter(r=>status(r)==='retard').sort((a,b)=>a.e-b.e||rank(a)-rank(b));
+  const meteo=L=>L.some(r=>r.c==='Haute'&&['retard','bloque'].includes(status(r)))?'ROUGE':L.some(r=>status(r)==='retard')?'ORANGE':'VERT';
+  const chs=CHS.filter(c=>P.some(r=>r.ch===c)).map(c=>{const L=P.filter(r=>r.ch===c),O=L.filter(r=>!done(r)),nx=[...O].sort((a,b)=>a.e-b.e)[0];
+    return {name:c,n:L.length,done:L.filter(done).length,late:L.filter(r=>status(r)==='retard').length,crit:O.filter(r=>r.c==='Haute').length,next:nx?nx.e:null,nextLate:!!nx&&nx.e<T,met:meteo(L)}});
+  const glob=chs.reduce((m,c)=>MRANK[c.met]>MRANK[m]?c.met:m,'VERT');
+  const ev=EVENTS.find(e=>e.d>=T)||EVENTS[EVENTS.length-1];
+  const evName={'COPIL Go vague 1':'au COPIL Go','Kick-off 26–27':'au Kick-off','Démarrage':'au démarrage'}[ev.l]||'à l’échéance';
+  const crit=open.filter(r=>r.c==='Haute'||r.c==='Moyenne').sort((a,b)=>a.e-b.e||rank(a)-rank(b)||a.id.localeCompare(b.id,'fr',{numeric:true}));
+  return {T,P,done:P.filter(done).length,late,glob,chs,ev,evName,crit,
+    critLate:late.filter(r=>r.c==='Haute').length,
+    crit3:open.filter(r=>r.c==='Haute'&&r.e>=T&&bdays(T+1,r.e)<=3).length,
+    decisions:open.filter(isDecision).length,
+    nCritEv:open.filter(r=>r.c==='Haute'&&r.e<=ev.d).length}}
+const jLabel=(T,d)=>d<T?'✓':d===T?'Jour J':'J-'+bdays(T+1,d);
+function openSponsor(){
+  PANEL.mode='ppt';PANEL.id=null;
+  let mem={};try{mem=JSON.parse(localStorage.getItem(SPONSOR_KEY)||'{}')}catch(e){}
+  const D=sponsorData();
+  $('panel').innerHTML=`<div class="ph"><button class="x" id="px" aria-label="Fermer">×</button><span class="crumb">Tableau de bord sponsor · 2 slides</span><h2>Générer les slides sponsor</h2></div>
+  <form class="pb ef" id="pptForm" novalidate>
+    <p class="muted">Situation au ${esc(dmy(D.T))} (date de situation du dashboard) · ${D.P.length} actions programme · météo globale <b style="color:#${METEO[D.glob]}">${D.glob}</b> · ${D.late.length} en retard.</p>
+    <label>Faits marquants du jour <small>(une ligne par point)</small><textarea name="faits" rows="4" placeholder="Ex. Offre ajustée Temenos reçue">${esc(mem.faits||'')}</textarea></label>
+    <label>Décisions attendues du sponsor <small>(une ligne par point : sujet, décision attendue, porteur, échéance)</small><textarea name="dec" rows="4" placeholder="Ex. Valider le scope V1 – Direction Programme – 16/10">${esc(mem.dec||'')}</textarea></label>
+    <p class="muted">Les lignes laissées vides apparaîtront « [À compléter par le PMO] ». Ces textes sont mémorisés dans ce navigateur.</p>
+    <p class="err" id="perr" role="alert"></p>
+    <div class="pact"><button type="submit" class="btn primary" id="pptGo">Générer le PowerPoint</button><button type="button" class="btn" id="pptCancel">Annuler</button></div>
+  </form>`;
+  showPanel('Générer les slides sponsor');
+  $('px').onclick=$('pptCancel').onclick=closePanel;
+  const f=$('pptForm');
+  f.onsubmit=async e=>{e.preventDefault();
+    const faits=f.faits.value,dec=f.dec.value;try{localStorage.setItem(SPONSOR_KEY,JSON.stringify({faits,dec}))}catch(err){}
+    const b=$('pptGo');b.disabled=true;b.textContent='Génération…';$('perr').textContent='';
+    try{await loadPptx();await buildSponsorPptx(sponsorData(),faits.split('\n').map(s=>s.trim()).filter(Boolean),dec.split('\n').map(s=>s.trim()).filter(Boolean));toast('PowerPoint téléchargé : tableau de bord sponsor');closePanel()}
+    catch(err){console.error(err);$('perr').textContent='Génération impossible : '+(err.message||err);b.disabled=false;b.textContent='Générer le PowerPoint'}};
+}
+async function buildSponsorPptx(D,faits,dec){
+  const OR='E07B16',INK='1A1A1A',MUT='595959',LIGHT='FAE5D3',RED='C00000',F='Poppins',x=px=>px/150;
+  const pres=new window.PptxGenJS();pres.layout='LAYOUT_WIDE';pres.title='Tableau de bord sponsor – Démarrage vague 1';
+  const t=(s,txt,o)=>s.addText(txt,{fontFace:F,margin:0,color:INK,valign:'middle',...o});
+  const line=(s,x0,y0,w,c,wt)=>s.addShape(pres.ShapeType.line,{x:x(x0),y:x(y0),w:x(w),h:0,line:{color:c,width:wt}});
+  const T=D.T,FOOT='ACT 2030 · Démarrage de la vague 1 · Point quotidien au sponsor';
+
+  /* ---------- Slide 1 : tableau de bord ---------- */
+  const s1=pres.addSlide();
+  t(s1,[{text:'Tableau de bord : ',options:{color:OR}},{text:'démarrage de la vague 1'}],{x:x(92),y:x(40),w:x(1400),h:x(75),fontSize:26,bold:true});
+  t(s1,'SITUATION AU '+dmy(T),{x:x(92),y:x(124),w:x(800),h:x(24),fontSize:9,bold:true});
+  s1.addShape(pres.ShapeType.roundRect,{x:x(1572),y:x(33),w:x(337),h:x(75),fill:{color:LIGHT},line:{color:LIGHT},rectRadius:x(37)});
+  t(s1,'Météo globale',{x:x(1594),y:x(33),w:x(160),h:x(75),fontSize:10,color:MUT});
+  s1.addShape(pres.ShapeType.ellipse,{x:x(1757),y:x(61),w:x(20),h:x(20),fill:{color:METEO[D.glob]},line:{color:METEO[D.glob]}});
+  t(s1,D.glob,{x:x(1785),y:x(33),w:x(120),h:x(75),fontSize:13,bold:true});
+  /* Bloc latéral : jalons clés et éléments en retard */
+  s1.addShape(pres.ShapeType.roundRect,{x:x(-60),y:x(150),w:x(415),h:x(920),fill:{color:OR},line:{color:OR},rectRadius:x(30)});
+  t(s1,'Jalons clés',{x:x(92),y:x(195),w:x(250),h:x(40),fontSize:16,bold:true,color:'FFFFFF'});line(s1,92,243,255,'FFFFFF',1.5);
+  [[16,'COPIL – Go vague 1'],[21,'Kick-off programme'],[23,'Démarrage vague 1']].forEach(([d,l],i)=>{const y0=262+i*155;
+    if(i)line(s1,92,y0-6,240,'FFFFFF',0.75);
+    t(s1,l,{x:x(92),y:x(y0),w:x(255),h:x(40),fontSize:11,bold:true,color:"FFFFFF"});
+    t(s1,dmy(d),{x:x(92),y:x(y0+38),w:x(255),h:x(36),fontSize:11,color:'FFFFFF'});
+    t(s1,jLabel(T,d),{x:x(92),y:x(y0+72),w:x(255),h:x(70),fontSize:28,bold:true,color:"FFFFFF"})});
+  t(s1,'J- : jours ouvrés restants',{x:x(92),y:x(735),w:x(255),h:x(26),fontSize:9,italic:true,color:'FFFFFF'});
+  t(s1,'Éléments en retard',{x:x(92),y:x(808),w:x(255),h:x(40),fontSize:11.5,bold:true,color:"FFFFFF"});line(s1,92,851,238,'FFFFFF',1.5);
+  const LMAX=3,LL=D.late.slice(0,LMAX).map(r=>({text:`${r.id} ${r.a.length>26?r.a.slice(0,25)+'…':r.a} (${dm(r.e)})`,options:{bullet:{characterCode:"2013",indent:10},breakLine:true,paraSpaceAfter:3}}));
+  if(D.late.length>LMAX)LL.push({text:`+ ${D.late.length-LMAX} autre${D.late.length-LMAX>1?'s':''}`,options:{bullet:{characterCode:"2013",indent:10},breakLine:true}});
+  if(!LL.length)LL.push({text:'Aucun élément en retard',options:{}});
+  if(LL.length)delete LL[LL.length-1].options.breakLine;
+  t(s1,LL,{x:x(92),y:x(866),w:x(250),h:x(190),fontSize:9,color:'FFFFFF',valign:'top'});
+  /* Indicateurs */
+  const pct=D.P.length?Math.round(D.done/D.P.length*100):0;
+  [[pct+' %','Avancement',OR],[D.done+' / '+D.P.length,'Réalisés',OR],[String(D.late.length),'En retard',D.late.length?RED:OR],[String(D.critLate),'Critiques en retard',D.critLate?RED:OR],[String(D.crit3),'Échéances critiques à 3 j',OR],[String(D.decisions),'Décisions ouvertes',OR]].forEach(([v,l,c],i)=>{const x0=384+i*258;
+    s1.addShape(pres.ShapeType.rect,{x:x(x0),y:x(189),w:x(235),h:x(142),fill:{color:LIGHT},line:{color:LIGHT}});
+    t(s1,v,{x:x(x0),y:x(200),w:x(235),h:x(62),fontSize:26,bold:true,color:c,align:'center'});
+    t(s1,l,{x:x(x0+8),y:x(262),w:x(219),h:x(52),fontSize:11,align:'center',valign:'top'})});
+  /* Tableau par chantier */
+  const C1=[[384,320,'Chantier','left'],[720,120,'Éléments','center'],[862,120,'Réalisés','center'],[1006,120,'Avanc.','center'],[1148,120,'En retard','center'],[1305,136,'Critiques ouverts','center'],[1460,200,'Proch. échéance','center'],[1671,240,'Météo','left']];
+  C1.forEach(([x0,w,l,a])=>t(s1,l,{x:x(x0),y:x(368),w:x(w),h:x(58),fontSize:12,bold:true,color:OR,align:a,valign:'bottom'}));
+  line(s1,384,432,1526,INK,2);
+  const n=D.chs.length,rh=Math.min(71,568/Math.max(1,n));
+  D.chs.forEach((c,i)=>{const y0=433+i*rh,cell=(k,v,o={})=>t(s1,v,{x:x(C1[k][0]),y:x(y0),w:x(C1[k][1]),h:x(rh),fontSize:12,align:C1[k][3],...o});
+    cell(0,c.name,{bold:true});cell(1,String(c.n));cell(2,String(c.done));cell(3,(c.n?Math.round(c.done/c.n*100):0)+' %');
+    cell(4,String(c.late),c.late?{color:RED,bold:true}:{});cell(5,String(c.crit));cell(6,c.next==null?'—':dm(c.next),c.nextLate?{color:RED,bold:true}:{});
+    s1.addShape(pres.ShapeType.ellipse,{x:x(1671),y:x(y0+rh/2-10),w:x(20),h:x(20),fill:{color:METEO[c.met]},line:{color:METEO[c.met]}});
+    t(s1,c.met,{x:x(1704),y:x(y0),w:x(200),h:x(rh),fontSize:12,bold:true});
+    line(s1,384,y0+rh,1526,'BFBFBF',0.75)});
+  t(s1,FOOT,{x:x(384),y:x(1020),w:x(1200),h:x(26),fontSize:9,color:MUT});
+  t(s1,'1',{x:x(1860),y:x(1065),w:x(50),h:x(26),fontSize:9,align:'right'});
+
+  /* ---------- Slide 2 : échéances critiques ---------- */
+  const s2=pres.addSlide();
+  t(s2,[{text:'Échéances critiques : ',options:{color:OR}},{text:`${D.nCritEv} action${D.nCritEv>1?'s':''} critique${D.nCritEv>1?'s':''} due${D.nCritEv>1?'s':''} ${D.evName} du ${dm(D.ev.d)}`}],{x:x(92),y:x(40),w:x(1820),h:x(75),fontSize:24,bold:true});
+  t(s2,'ÉLÉMENTS CRITIQUES ET QUASI-CRITIQUES NON RÉALISÉS, AU '+dmy(T),{x:x(92),y:x(124),w:x(1200),h:x(24),fontSize:9,bold:true});
+  const C2=[[92,95,'ID','left'],[195,385,'Action / jalon','left'],[582,128,'Échéance','center'],[715,255,'Porteur','left'],[975,205,'Qualification','left'],[1185,215,'Statut','center'],[1405,94,'Délai','center']];
+  C2.forEach(([x0,w,l,a])=>t(s2,l,{x:x(x0),y:x(200),w:x(w),h:x(40),fontSize:11,bold:true,color:OR,align:a,valign:'bottom'}));
+  line(s2,92,243,1407,INK,2);
+  const ROWS=10,rows=D.crit.slice(0,ROWS),stc={retard:RED,bloque:'7030A0',cours:OR,venir:MUT,fait:'00B050'};
+  rows.forEach((r,i)=>{const y0=244+i*75,cell=(k,v,o={})=>t(s2,v,{x:x(C2[k][0]),y:x(y0),w:x(C2[k][1]),h:x(75),fontSize:10.5,align:C2[k][3],...o});
+    const st=status(r),q=r.c==='Haute';
+    cell(0,r.id,{bold:true,fontSize:9.5});cell(1,r.a.length>58?r.a.slice(0,57)+'…':r.a);cell(2,dm(r.e),st==='retard'?{color:RED,bold:true}:{});cell(3,r.p||'—');
+    s2.addShape(pres.ShapeType.ellipse,{x:x(975),y:x(y0+29),w:x(17),h:x(17),fill:{color:q?RED:'FFC000'},line:{color:q?RED:'FFC000'}});
+    t(s2,q?'Critique':'Quasi-critique',{x:x(1001),y:x(y0),w:x(180),h:x(75),fontSize:10.5,bold:true});
+    cell(5,ST[st],{italic:true,color:stc[st]||MUT});
+    cell(6,r.e<T?`+${T-r.e} j`:jLabel(T,r.e),{bold:true,color:r.e<T?RED:INK});
+    line(s2,92,y0+75,1407,'BFBFBF',0.75)});
+  if(!rows.length)t(s2,'Aucun élément critique ou quasi-critique ouvert.',{x:x(174),y:x(260),w:x(900),h:x(60),fontSize:12,italic:true,color:MUT});
+  const more=D.crit.length-rows.length;
+  t(s2,`${more>0?`+ ${more} autre${more>1?'s':''} non affiché${more>1?'s':''} · `:''}Source : dashboard « Planning démarrage vague 1 » (actions programme) · Point quotidien au sponsor`,{x:x(92),y:x(1016),w:x(1407),h:x(26),fontSize:8.5,color:MUT});
+  s2.addShape(pres.ShapeType.rect,{x:x(1551),y:x(243),w:x(449),h:x(882),fill:{color:LIGHT},line:{color:LIGHT}});
+  const pts=(L,ph)=>(L.length?L:[ph,ph]).map((s,i,a)=>({text:s,options:{bullet:{characterCode:'2013',indent:12},italic:!L.length,breakLine:i<a.length-1,paraSpaceAfter:6}}));
+  t(s2,'Faits marquants du jour',{x:x(1575),y:x(280),w:x(320),h:x(75),fontSize:15,bold:true,valign:'top'});line(s2,1575,362,315,INK,0.75);
+  t(s2,pts(faits.slice(0,5),'[À compléter par le PMO]'),{x:x(1575),y:x(378),w:x(375),h:x(205),fontSize:12,valign:'top'});
+  t(s2,'Décisions attendues du sponsor',{x:x(1575),y:x(605),w:x(320),h:x(110),fontSize:15,bold:true,valign:'top'});line(s2,1575,722,315,INK,0.75);
+  t(s2,pts(dec.slice(0,4),'[Sujet, décision attendue, porteur, échéance]'),{x:x(1575),y:x(738),w:x(375),h:x(300),fontSize:12,valign:'top'});
+  t(s2,'2',{x:x(1880),y:x(1065),w:x(50),h:x(26),fontSize:9,align:'right'});
+
+  await pres.writeFile({fileName:`BCP_CBS_Tableau_de_bord_Sponsor_Vague1_${toISO(T)}.pptx`});
 }
 async function readPlanningFile(file){
   try{const o=JSON.parse(await file.text());const raw=Array.isArray(o)?o:o.items;if(!Array.isArray(raw))throw new Error('format');
