@@ -348,7 +348,7 @@ button.hrow:hover{background:var(--hover)}
 .deps{display:flex;flex-wrap:wrap;gap:6px}
 .deps:empty{display:none}
 /* Lecture seule : les commandes de modification sont masquées */
-body.ro #addBtn,body.ro #teamAddBtn,body.ro #mailBtn,body.ro #pptBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
+body.ro #todoBtn,body.ro #unBtn,body.ro #todoWho,body.ro #addBtn,body.ro #teamAddBtn,body.ro #mailBtn,body.ro #pptBtn,body.ro #histBtn,body.ro .gadd,body.ro #mainAct,body.ro .blkbox .pact,body.ro .danger,body.ro .filebtn,body.ro #restoreAll{display:none!important}
 body.ro .bar,body.ro .dia{cursor:pointer}
 /* Todo équipe : actions affectées à un membre */
 body:not(.admin) #rapBtn{display:none!important}
@@ -497,7 +497,7 @@ const splitP=p=>String(p||'').split('/').map(x=>x.trim()).filter(Boolean);
 const porteurs=()=>[...new Set(ITEMS.flatMap(r=>splitP(r.p)))].sort((a,b)=>a.localeCompare(b,'fr'));
 const byId=id=>ITEMS.find(x=>x.id===id);
 /* Équipe : membres du site (/membres), complétés par les personnes déjà affectées (visibles aussi des lecteurs) */
-let MEMBRES=[],RAPPELS={};/* RAPPELS (administrateur seulement) : {uid:{on,email,dernier}} */
+let MEMBRES=[],RAPPELS={},HIDDEN=new Set();/* HIDDEN : actions de la todo équipe masquées aux lecteurs *//* RAPPELS (administrateur seulement) : {uid:{on,email,dernier}} */
 const team=()=>{const m=new Map(MEMBRES.map(x=>[x.uid,x.name]));ITEMS.forEach(r=>{if(r.t&&!m.has(r.t))m.set(r.t,r.tn||'?')});return [...m].map(([uid,name])=>({uid,name})).sort((a,b)=>a.name.localeCompare(b.name,'fr'))};
 const nameOf=r=>r.t?((MEMBRES.find(x=>x.uid===r.t)||{}).name||r.tn||'?'):'';
 
@@ -724,6 +724,7 @@ function renderTop(){
   $('kpis').querySelectorAll('.kpi').forEach(b=>b.onclick=()=>{S.status=S.status===b.dataset.k?null:b.dataset.k;update()});
   critBox.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.c===S.crit));
   $('critBtn').setAttribute('aria-pressed',S.critBlock);
+  if(BE.ro)S.todo='';
   const TM=team();if(S.todo&&S.todo!=='*'&&S.todo!=='-'&&!TM.some(m=>m.uid===S.todo))S.todo='*';
   const nT=ITEMS.filter(r=>r.t).length,team1=!!S.todo&&S.todo!=='-';
   $('todoBtn').setAttribute('aria-pressed',team1);$('todoBtn').textContent=`Todo équipe${nT?' ('+nT+')':''}`;
@@ -734,7 +735,7 @@ function renderTop(){
   document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===S.view));
   const P=porteurs();if(S.porteur&&!P.includes(S.porteur))S.porteur='';
   $('porteur').innerHTML='<option value="">Tous les porteurs</option>'+P.map(p=>`<option${p===S.porteur?' selected':''}>${esc(p)}</option>`).join('');
-  const nMod=ITEMS.filter(r=>isMod(r)||isNew(r)).length,nDel=Object.keys(ORIG).filter(k=>!byId(k)).length;
+  const nMod=ITEMS.filter(r=>isMod(r)||isNew(r)).length,nDel=Object.keys(ORIG).filter(k=>!byId(k)&&!HIDDEN.has(k)).length;
   const chips=$('chips');
   chips.innerHTML=`<button class="chip" data-ch="" aria-pressed="${!S.chs.size}">Tous les chantiers</button>`+CHS.map(c=>{const n=ITEMS.filter(r=>r.ch===c).length;return `<button class="chip" data-ch="${esc(c)}" aria-pressed="${S.chs.has(c)}">${esc(c)}<small>${n}</small></button>`}).join('')
     +(nMod||S.status==='modif'?`<button class="chip modchip" data-modif aria-pressed="${S.status==='modif'}">Modifiées ou ajoutées<small>${nMod}</small></button>`:'')
@@ -818,7 +819,7 @@ function openPanel(id){
   const was=f=>o&&o[f]!==r[f]?`<small class="was">avant : ${esc(f==='s'||f==='e'?fmt(o[f]):o[f]||'—')}</small>`:'';
   $('panel').innerHTML=`<div class="ph st-${st}"><button class="x" id="px" aria-label="Fermer">×</button><span class="crumb">${esc(r.id)} · ${esc(r.ch)} › ${esc(r.br)}</span><h2>${esc(r.a)}</h2>${o&&o.a!==r.a?`<small class="was">avant : ${esc(o.a)}</small>`:''}<span class="tags"><span class="status">${ST[st]}</span>${tag(r)}</span>${r.by&&r.at?`<span class="lastmod">Dernière modification par <b>${esc(r.by)}</b>, ${esc(when(r.at))}</span>`:''}</div>
   <div class="pb st-${st}">
-    <dl class="facts"><dt>Porteur</dt><dd>${esc(r.p)||'—'}${was('p')}</dd><dt>Affectée à</dt><dd>${BE.ro?esc(nameOf(r))||'—':`<select id="asgSel" aria-label="Affecter à un membre de l’équipe">${teamOpts(r.t)}</select>`}</dd><dt>Criticité</dt><dd>${r.c?`<span class="crit ${r.c}">${r.c}</span>`:'Non renseignée'}${was('c')}</dd>
+    <dl class="facts"><dt>Porteur</dt><dd>${esc(r.p)||'—'}${was('p')}</dd>${BE.ro?'':`<dt>Affectée à</dt><dd><select id="asgSel" aria-label="Affecter à un membre de l’équipe">${teamOpts(r.t)}</select></dd>`}<dt>Criticité</dt><dd>${r.c?`<span class="crit ${r.c}">${r.c}</span>`:'Non renseignée'}${was('c')}</dd>
     <dt>${r.s===r.e?'Date':'Début'}</dt><dd>${fmtL(r.s)}${was('s')}</dd>${r.s===r.e?'':`<dt>Fin</dt><dd>${fmtL(r.e)}${was('e')}</dd><dt>Durée</dt><dd>${dur} jour${dur>1?'s':''} ouvré${dur>1?'s':''}</dd>`}<dt>Au ${fmt(S.T)}</dt><dd>${whenTxt}</dd></dl>
     <div><div class="mini">${r.s===r.e?`<i class="dia" style="left:${pc(r.s+.5)}%"></i>`:`<i class="bar" style="left:${pc(r.s)}%;width:${pc(r.e-r.s+1)}%"></i>`}<i class="t" style="left:${pc(S.T+.5)}%"></i></div><div class="mini-l"><span>5 oct.</span><span>${fmt(span-1)}</span></div></div>
     ${B?`<div class="blkbox"><strong>Bloqué depuis le ${new Date(r.bat).toLocaleDateString('fr-FR',{day:'numeric',month:'long'})}</strong><p>${r.m?esc(r.m):'Aucun motif indiqué.'}</p><div class="pact"><button class="btn" id="blkEdit">Modifier le motif</button><button class="btn blkon" id="unblk">Débloquer</button></div></div>`:''}
@@ -1004,7 +1005,7 @@ function exportCSV(){
   const d=x=>dt(x).toLocaleDateString('fr-FR');
   const lines=[['ID','Chantier','Sous-chantier','Action','Porteur','Criticité','Début','Fin','Statut','Motif de blocage','Modification','Modifiée par','Modifiée le','Dépend de','Affectée à'].map(q).join(';')];
   ordered(ITEMS).forEach(r=>lines.push([r.id,r.ch,r.br,r.a,r.p,r.c,d(r.s),d(r.e),ST[status(r)],r.st==='bloque'?r.m:'',isNew(r)?'Ajoutée':isMod(r)?'Modifiée':'',r.by||'',r.at?new Date(r.at).toLocaleString('fr-FR'):'',(r.d||[]).join(', '),nameOf(r)].map(q).join(';')));
-  Object.values(ORIG).filter(r=>!byId(r.id)).forEach(r=>lines.push([r.id,r.ch,r.br,r.a,r.p,r.c,d(r.s),d(r.e),'','','Supprimée','','','',''].map(q).join(';')));
+  Object.values(ORIG).filter(r=>!byId(r.id)&&!HIDDEN.has(r.id)).forEach(r=>lines.push([r.id,r.ch,r.br,r.a,r.p,r.c,d(r.s),d(r.e),'','','Supprimée','','','',''].map(q).join(';')));
   download('\ufeff'+lines.join('\r\n'),'text/csv;charset=utf-8','Planning_demarrage_vague_1_'+new Date().toISOString().slice(0,10)+'.csv');
   toast('Export CSV téléchargé');
 }
@@ -1113,6 +1114,7 @@ function sponsorData(){
     nCritEv:open.filter(r=>r.c==='Haute'&&r.e<=ev.d).length}}
 const jLabel=(T,d)=>d<T?'✓':d===T?'Jour J':'J-'+bdays(T+1,d);
 function openSponsor(){
+  if(BE.ro)return;/* réservé aux membres : le bouton est aussi masqué pour les lecteurs */
   PANEL.mode='ppt';PANEL.id=null;
   let mem={};try{mem=JSON.parse(localStorage.getItem(SPONSOR_KEY)||'{}')}catch(e){}
   const D=sponsorData();
@@ -1290,7 +1292,9 @@ function gate(kind,info){
    ===================================================================== */
 let knownJournal=null;
 function applyRemoteItems(obj){
-  const next=fromObj(obj),prev=new Map(ITEMS.map(r=>[r.id,JSON.stringify(r)]));
+  let next=fromObj(obj);const prev=new Map(ITEMS.map(r=>[r.id,JSON.stringify(r)]));
+  /* Lecteurs : la todo équipe (actions affectées à un membre) n'est pas affichée ; seules les actions programme restent */
+  if(BE.ro){HIDDEN=new Set(next.filter(r=>r.t).map(r=>r.id));next=next.filter(r=>!r.t);next.forEach(r=>{if(r.d){const d=r.d.filter(p=>!HIDDEN.has(p));if(d.length)r.d=d;else delete r.d}})}
   if(READY)next.forEach(r=>{const p=prev.get(r.id);if(p!==JSON.stringify(r)&&r.u&&r.u!==BE.uid)FLASH.add(r.id)});
   ITEMS=next;
   if(!READY)return;
