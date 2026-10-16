@@ -251,6 +251,17 @@ select{padding:7px 10px;border:1px solid var(--line);border-radius:9px;backgroun
 @media (prefers-color-scheme:dark){:root{--blk:#b68be6}}
 .kpis{grid-template-columns:repeat(5,minmax(0,1fr))}
 .st-bloque{--sc:var(--blk)}
+/* Circuit de validation des tâches d'équipe */
+.st-valid{--sc:var(--now)} .st-vretard{--sc:var(--late)}
+.st-vretard .al .id{color:var(--late);font-weight:700}
+.vtag{font-weight:600;color:var(--now)} .vtag.late{color:var(--late)}
+.valbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:8px}
+.valbox h4{margin:0}
+.valbox .vrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.valbox .vrow b{min-width:92px}
+.valbox ol{margin:0;padding-left:18px;display:grid;gap:3px;font-size:12.5px}
+.valbox .ko{color:var(--late)} .valbox .ok{color:var(--done)}
+.valbox textarea{font:inherit;width:100%;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
 .st-bloque .bar{background:repeating-linear-gradient(135deg,var(--blk) 0 7px,color-mix(in srgb,var(--blk) 82%,#000) 7px 14px)}
 .st-bloque .al .id{color:var(--blk);font-weight:700}
 .blk{font-size:12px;font-weight:700;color:var(--blk);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -446,6 +457,8 @@ window.FIREBASE_CONFIG = {
     <span><i style="--c:var(--accent)"></i>En cours</span>
     <span><i style="--c:var(--late)"></i>Échéance dépassée, non soldée</span>
     <span><i style="--c:var(--blk)"></i>Bloqué</span>
+    <span><i style="--c:var(--now)"></i>À valider</span>
+    <span><i style="--c:var(--late)"></i>Validation en retard</span>
     <span><i style="--c:var(--done)"></i>Fait</span>
     <span><i class="d" style="--c:var(--muted)"></i>Jalon / décision</span>
   </div>
@@ -484,7 +497,9 @@ const when=ts=>{if(!ts)return '';const d=new Date(ts),m=Math.round((Date.now()-t
 const EVENTS=[{d:16,l:'COPIL Go vague 1'},{d:21,w:2,l:'Kick-off 26–27'},{d:23,l:'Démarrage',go:1}];
 const BASE_CHS=['Ressources','Achats','IT / Architecture','Logistique','Gouvernance','Assessment','Change & Com'];
 const FIELDS=['a','p','c','s','e','br','ch'];
-const ST={venir:'À venir',cours:'En cours',retard:'Échéance dépassée',bloque:'Bloqué',fait:'Fait'};
+const ST={venir:'À venir',cours:'En cours',retard:'Échéance dépassée',bloque:'Bloqué',fait:'Fait',valid:'À valider',vretard:'Validation en retard'};
+/* Validation : chaque validateur dispose de VAL_N jour(s) ouvré(s) après la soumission (ou la validation précédente) */
+const VAL_N=1,VAL_MAX=5;
 
 let ITEMS=[],ORIG={},JOURNAL=[],PRESENCE=[],READY=false;
 const FLASH=new Set();
@@ -525,6 +540,12 @@ function cleanItem(r,i){
   if(r.st==='fait'||r.st==='bloque')o.st=r.st;
   if(o.st==='bloque'){o.m=String(r.m||'');o.bat=Number(r.bat)||Date.now()}
   if(r.t){o.t=String(r.t).slice(0,128);o.tn=String(r.tn||'').slice(0,120)}
+  /* Validation : v (UID des validateurs, dans l'ordre), vn (noms), vk (étape en cours), vd (jour de début de l'étape), vh (historique), vm (dernier motif de refus) */
+  const arr=x=>x&&typeof x==='object'?Object.values(x):[];
+  if(o.t&&r.v){const v=arr(r.v).map(String).slice(0,VAL_MAX),vn=arr(r.vn).map(String);if(v.length){o.v=v;o.vn=v.map((_,i)=>vn[i]||'?');
+    if(Number.isInteger(r.vk)&&r.vk>=0&&r.vk<v.length&&o.st!=='fait'){o.vk=r.vk;o.vd=Number.isInteger(r.vd)?r.vd:0}}}
+  if(r.vh){const h=arr(r.vh).filter(x=>x&&typeof x==='object').slice(-20).map(x=>({a:String(x.a||''),n:String(x.n||''),at:Number(x.at)||0,...(x.m?{m:String(x.m)}:{}),...(Number.isInteger(x.k)?{k:x.k}:{})}));if(h.length)o.vh=h}
+  if(r.vm&&o.vk==null&&o.st!=='fait')o.vm=String(r.vm);
   if(r.by)o.by=String(r.by);if(r.u)o.u=String(r.u);if(r.at)o.at=Number(r.at)||0;
   const d=r.d&&typeof r.d==='object'?[...new Set(Object.values(r.d).map(String))].filter(x=>x!==r.id&&/^[A-Za-z0-9_.-]{1,40}$/.test(x)):[];
   if(d.length)o.d=d;
@@ -655,14 +676,19 @@ function toast(msg,opt={}){
 /* =====================================================================
    Statuts, filtres, ordre
    ===================================================================== */
-const status=r=>r.st==='fait'?'fait':r.st==='bloque'?'bloque':r.e<S.T?'retard':r.s<=S.T?'cours':'venir';
+const inVal=r=>r.vk!=null&&!!r.v;
+const curV=r=>inVal(r)?r.v[r.vk]:null;
+const valLate=(r,T)=>inVal(r)&&T>r.vd&&bdays(r.vd+1,T)>VAL_N;
+const valTag=r=>inVal(r)?`<span class="vtag${valLate(r,S.T)?' late':''}">${valLate(r,S.T)?'Validation en retard':'À valider'} : ${esc(r.vn[r.vk])} (V${r.vk+1}/${r.v.length})</span>`:r.vm?`<span class="vtag late" title="${esc(r.vm)}">Refusée : à reprendre</span>`:'';
+const status=r=>r.st==='fait'?'fait':r.st==='bloque'?'bloque':inVal(r)?(valLate(r,S.T)?'vretard':'valid'):r.e<S.T?'retard':r.s<=S.T?'cours':'venir';
 const friday=()=>{const f=S.T-((dt(S.T).getDay()+6)%7)+4;return f<S.T?f+7:f};
 const thisWeek=r=>r.st!=='fait'&&r.e>=S.T&&r.e<=friday();
 function baseMatch(r,noTodo){
   if(S.crit!=='Toutes'&&r.c!==S.crit)return false;
   if(S.chs.size&&!S.chs.has(r.ch))return false;
   if(S.porteur&&!splitP(r.p).includes(S.porteur))return false;
-  if(noTodo!==true&&S.todo&&!(S.todo==='-'?!r.t:S.todo==='*'?r.t:r.t===S.todo))return false;
+  /* La todo d'une personne comprend ses tâches et celles qu'elle doit valider (étape en cours) */
+  if(noTodo!==true&&S.todo&&!(S.todo==='-'?!r.t:S.todo==='*'?r.t:(r.t===S.todo||curV(r)===S.todo)))return false;
   if(S.q){const h=(r.id+' '+r.a+' '+r.p+' '+r.br+' '+r.ch+' '+(r.m||'')+' '+nameOf(r)).toLowerCase();if(!S.q.split(/\s+/).every(w=>h.includes(w)))return false}
   return true}
 function statusMatch(r){if(!S.status)return true;if(S.status==='semaine')return thisWeek(r);if(S.status==='modif')return isMod(r)||isNew(r);return status(r)===S.status}
@@ -731,7 +757,7 @@ function renderTop(){
   $('unBtn').setAttribute('aria-pressed',S.todo==='-');$('unBtn').textContent=`Actions programme (${ITEMS.length-nT})`;
   $('todoWho').hidden=!team1;
   if(BE.admin){const n=dueReminders().length;$('rapBtn').textContent=`Rappels${n?' ('+n+')':''}`}
-  $('todoWho').innerHTML='<option value="*">Toute l’équipe</option>'+TM.map(m=>`<option value="${esc(m.uid)}"${m.uid===S.todo?' selected':''}>${esc(m.uid===BE.uid?m.name+' (moi)':m.name)} – ${ITEMS.filter(r=>r.t===m.uid).length}</option>`).join('');
+  $('todoWho').innerHTML='<option value="*">Toute l’équipe</option>'+TM.map(m=>`<option value="${esc(m.uid)}"${m.uid===S.todo?' selected':''}>${esc(m.uid===BE.uid?m.name+' (moi)':m.name)} – ${ITEMS.filter(r=>r.t===m.uid||curV(r)===m.uid).length}</option>`).join('');
   document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===S.view));
   const P=porteurs();if(S.porteur&&!P.includes(S.porteur))S.porteur='';
   $('porteur').innerHTML='<option value="">Tous les porteurs</option>'+P.map(p=>`<option${p===S.porteur?' selected':''}>${esc(p)}</option>`).join('');
@@ -786,7 +812,7 @@ function renderGantt(rows,intro){
     if(S.collapsed.has(ch))return;
     if(sub(r)!==br){br=sub(r);h+=`<div class="r sb"><div class="lc">${esc(br)}</div><div class="tc"></div></div>`}
     const st=status(r);
-    h+=`<div class="r a st-${st}${PANEL.id===r.id&&PANEL.mode?' sel':''}${FLASH.has(r.id)?' flash':''}"><div class="lc"><button class="al" data-open="${r.id}"><span class="id">${esc(r.id)}</span><span class="tx">${esc(r.a)}</span><span class="meta">${st==='fait'?'<span class="tick">✓ Fait</span>':''}${blkTag(r)}${tag(r)}${r.t?`<span class="asg" title="Todo équipe : affectée à ${esc(nameOf(r))}">→ ${esc(nameOf(r))}</span>`:''}${r.p?`<span>${esc(r.p)}</span>`:''}${r.c?`<span class="crit ${r.c}">${r.c}</span>`:''}${r.d?`<span title="Dépend de ${esc(r.d.join(', '))}">↳ après ${esc(r.d.join(', '))}</span>`:''}</span></button></div><div class="tc">${mark(r,i++)}</div></div>`});
+    h+=`<div class="r a st-${st}${PANEL.id===r.id&&PANEL.mode?' sel':''}${FLASH.has(r.id)?' flash':''}"><div class="lc"><button class="al" data-open="${r.id}"><span class="id">${esc(r.id)}</span><span class="tx">${esc(r.a)}</span><span class="meta">${st==='fait'?'<span class="tick">✓ Fait</span>':''}${blkTag(r)}${tag(r)}${r.t?`<span class="asg" title="Todo équipe : affectée à ${esc(nameOf(r))}">→ ${esc(nameOf(r))}</span>`:''}${valTag(r)}${r.p?`<span>${esc(r.p)}</span>`:''}${r.c?`<span class="crit ${r.c}">${r.c}</span>`:''}${r.d?`<span title="Dépend de ${esc(r.d.join(', '))}">↳ après ${esc(r.d.join(', '))}</span>`:''}</span></button></div><div class="tc">${mark(r,i++)}</div></div>`});
   if(!rows.length)h=`<div class="empty">Aucune action ne correspond à ces filtres.<br><button class="btn" onclick="document.getElementById('reset').click()">Réinitialiser les filtres</button></div>`;
   const R=$('rows');R.innerHTML=h;
   if(intro){R.classList.add('intro');setTimeout(()=>R.classList.remove('intro'),2400)}
@@ -798,7 +824,7 @@ function renderBoard(rows){
   $('board').innerHTML=W.map(([a,b,l])=>{
     const list=rows.filter(r=>r.e>=a&&r.e<=b).sort((x,y)=>rank(x)-rank(y)||x.e-y.e||x.id.localeCompare(y.id));
     const cur=S.T>=a&&S.T<=b;
-    return `<section class="col${cur?' cur':''}"><h3>${l}<small>${list.length}</small></h3><div class="list">${list.length?list.map(r=>{const st=status(r);return `<button class="card st-${st}${FLASH.has(r.id)?' flash':''}" data-open="${r.id}"><span class="top"><span>${esc(r.id)} · ${esc(r.ch)}</span><span>${range(r)}</span></span><span class="t">${esc(r.a)}</span><span class="m">${esc(r.p)}${r.c?', criticité '+r.c.toLowerCase():''}</span>${r.t?`<span class="m asg">→ ${esc(nameOf(r))}</span>`:''}${st==='bloque'&&r.m?`<span class="m blkm">${esc(r.m)}</span>`:''}<span class="badge">${ST[st]}${isNew(r)?' · ajoutée':isMod(r)?' · modifiée':''}</span></button>`}).join(''):'<p class="empty" style="padding:16px">Aucune échéance</p>'}</div></section>`}).join('');
+    return `<section class="col${cur?' cur':''}"><h3>${l}<small>${list.length}</small></h3><div class="list">${list.length?list.map(r=>{const st=status(r);return `<button class="card st-${st}${FLASH.has(r.id)?' flash':''}" data-open="${r.id}"><span class="top"><span>${esc(r.id)} · ${esc(r.ch)}</span><span>${range(r)}</span></span><span class="t">${esc(r.a)}</span><span class="m">${esc(r.p)}${r.c?', criticité '+r.c.toLowerCase():''}</span>${r.t?`<span class="m asg">→ ${esc(nameOf(r))}</span>`:''}${inVal(r)||r.vm?`<span class="m">${valTag(r)}</span>`:''}${st==='bloque'&&r.m?`<span class="m blkm">${esc(r.m)}</span>`:''}<span class="badge">${ST[st]}${isNew(r)?' · ajoutée':isMod(r)?' · modifiée':''}</span></button>`}).join(''):'<p class="empty" style="padding:16px">Aucune échéance</p>'}</div></section>`}).join('');
 }
 
 /* =====================================================================
@@ -811,7 +837,7 @@ function refreshPanel(){if(PANEL.mode==='item'){byId(PANEL.id)?openPanel(PANEL.i
 
 function openPanel(id){
   const r=byId(id);if(!r)return;PANEL.mode='item';PANEL.id=id;
-  const st=status(r),dur=bdays(r.s,r.e),gap=r.e-S.T,o=ORIG[id],B=r.st==='bloque';
+  const st=status(r),dur=bdays(r.s,r.e),gap=r.e-S.T,o=ORIG[id],B=r.st==='bloque',VV=!!(r.t&&r.v&&r.v.length);
   const whenTxt=st==='fait'?'Soldée':st==='bloque'?(gap>=0?`Bloquée, échéance dans ${gap} jour${gap>1?'s':''}`:`Bloquée, échéance dépassée de ${-gap} jour${gap<-1?'s':''}`):gap>0?`Échéance dans ${gap} jour${gap>1?'s':''}`:gap===0?'Échéance aujourd’hui':`Échéance dépassée de ${-gap} jour${gap<-1?'s':''}`;
   const sib=ordered(ITEMS.filter(x=>x.br===r.br&&x.ch===r.ch));
   const preds=(r.d||[]).map(byId).filter(Boolean),succs=ordered(dependents(id)),late=preds.filter(x=>r.s<x.e);
@@ -824,7 +850,8 @@ function openPanel(id){
     <div><div class="mini">${r.s===r.e?`<i class="dia" style="left:${pc(r.s+.5)}%"></i>`:`<i class="bar" style="left:${pc(r.s)}%;width:${pc(r.e-r.s+1)}%"></i>`}<i class="t" style="left:${pc(S.T+.5)}%"></i></div><div class="mini-l"><span>5 oct.</span><span>${fmt(span-1)}</span></div></div>
     ${B?`<div class="blkbox"><strong>Bloqué depuis le ${new Date(r.bat).toLocaleDateString('fr-FR',{day:'numeric',month:'long'})}</strong><p>${r.m?esc(r.m):'Aucun motif indiqué.'}</p><div class="pact"><button class="btn" id="blkEdit">Modifier le motif</button><button class="btn blkon" id="unblk">Débloquer</button></div></div>`:''}
     <div class="blkform" id="blkForm" hidden><label for="blkMotif">Motif du blocage <small>(facultatif)</small></label><textarea id="blkMotif" rows="2" placeholder="Ex. en attente de la validation du CFO">${esc(B?r.m:'')}</textarea><div class="pact"><button class="btn blkon" id="blkOk">${B?'Enregistrer le motif':'Confirmer le blocage'}</button><button class="btn" id="blkCancel">Annuler</button></div></div>
-    <div class="pact" id="mainAct"><button class="btn primary" id="editBtn">Modifier</button><button class="doneBtn${r.st==='fait'?' on':''}" id="doneBtn">${r.st==='fait'?'Rouvrir l’action':'Marquer comme faite'}</button>${B||r.st==='fait'?'':'<button class="btn blkbtn" id="blkBtn">Signaler un blocage</button>'}</div>
+    <div class="pact" id="mainAct"><button class="btn primary" id="editBtn">Modifier</button>${inVal(r)?'':`<button class="doneBtn${r.st==='fait'?' on':''}" id="doneBtn">${r.st==='fait'?'Rouvrir l’action':VV?'Soumettre à validation':'Marquer comme faite'}</button>`}${B||r.st==='fait'?'':'<button class="btn blkbtn" id="blkBtn">Signaler un blocage</button>'}</div>
+    ${r.t&&!BE.ro?valBox(r):''}
     ${preds.length?`<div class="sib"><h4>Dépend de (${preds.length})</h4>${late.length?`<p class="warn">Cette action commence avant la fin de ${esc(late.map(x=>x.id).join(', '))}.</p>`:''}${preds.map(x=>`<button class="st-${status(x)}" data-open="${x.id}"><i></i>${esc(x.id)} – ${esc(x.a)}<span>fin ${fmt(x.e)}</span></button>`).join('')}</div>`:''}
     ${succs.length?`<div class="sib"><h4>Actions qui en dépendent (${succs.length})</h4>${succs.map(x=>`<button class="st-${status(x)}" data-open="${x.id}"><i></i>${esc(x.id)} – ${esc(x.a)}<span>début ${fmt(x.s)}</span></button>`).join('')}</div>`:''}
     <div class="sib"><h4>${esc(r.br)} (${sib.length})</h4>${sib.map(x=>`<button class="st-${status(x)}${x.id===id?' me':''}" data-open="${x.id}"><i></i>${esc(x.a)}<span>${fmt(x.e)}</span></button>`).join('')}</div>
@@ -834,7 +861,10 @@ function openPanel(id){
   $('px').onclick=closePanel;
   $('editBtn').onclick=()=>openEdit(id);
   if($('asgSel'))$('asgSel').onchange=e=>{const u=e.target.value;mutate(u?`${id} affectée à ${teamName(u)}`:`${id} retirée de la todo équipe`,()=>assign(r,u),id)};
-  $('doneBtn').onclick=()=>mutate(r.st==='fait'?`${id} rouverte`:`${id} marquée comme faite`,()=>{if(r.st==='fait')delete r.st;else{r.st='fait';delete r.m;delete r.bat}},id);
+  if($('doneBtn'))$('doneBtn').onclick=()=>r.st==='fait'?mutate(`${id} rouverte`,()=>{delete r.st;clearVal(r)},id)
+    :VV?mutate(`${id} soumise à validation (${r.vn[0]})`,()=>submitVal(r),id)
+    :mutate(`${id} marquée comme faite`,()=>{r.st='fait';delete r.m;delete r.bat},id);
+  bindValBox(r);
   const showBlk=()=>{$('blkForm').hidden=false;$('mainAct').hidden=true;$('blkMotif').focus()};
   if($('blkBtn'))$('blkBtn').onclick=showBlk;
   if($('blkEdit'))$('blkEdit').onclick=showBlk;
@@ -849,7 +879,49 @@ function openPanel(id){
 /* Affectation à un membre de l'équipe : UID (t) et nom affiché (tn, lisible par les lecteurs) */
 const teamName=u=>(team().find(m=>m.uid===u)||{}).name||'?';
 const teamOpts=cur=>'<option value="">Non affectée</option>'+team().map(m=>`<option value="${esc(m.uid)}"${m.uid===cur?' selected':''}>${esc(m.uid===BE.uid?m.name+' (moi)':m.name)}</option>`).join('');
-function assign(x,u){if(u){x.t=u;x.tn=teamName(u)}else{delete x.t;delete x.tn}}
+function assign(x,u){if(u){x.t=u;x.tn=teamName(u)}else{delete x.t;delete x.tn;clearVal(x);delete x.v;delete x.vn}}
+
+/* =====================================================================
+   Circuit de validation (tâches d'équipe) : soumission → validateur 1 → … → dernier validateur → Fait.
+   Un refus renvoie la tâche à la personne affectée ; le circuit reprend au validateur 1.
+   ===================================================================== */
+const todayIdx=()=>Math.max(0,Math.min(MAXD,realToday));
+const pushHist=(x,h)=>{x.vh=[...(x.vh||[]),{...h,n:BE.name,at:Date.now()}].slice(-20)};
+function clearVal(x){delete x.vk;delete x.vd;delete x.vm}
+function submitVal(x){x.vk=0;x.vd=todayIdx();delete x.vm;delete x.st;pushHist(x,{a:'soumise'})}
+function valBox(r){
+  const V=r.v||[],iv=inVal(r),fait=r.st==='fait',me=curV(r)===BE.uid;
+  const opts=cur=>team().filter(m=>m.uid!==r.t).map(m=>`<option value="${esc(m.uid)}"${m.uid===cur?' selected':''}>${esc(m.uid===BE.uid?m.name+' (moi)':m.name)}</option>`).join('');
+  const since=r.vd!=null?dmLong(r.vd):'';
+  let h='<div class="valbox" id="valBox"><h4>Validation</h4>';
+  if(!iv&&!fait){
+    h+=V.length?V.map((u,i)=>`<div class="vrow"><b>Validateur ${i+1}</b><select data-vi="${i}" aria-label="Validateur ${i+1}">${opts(u)}</select><button type="button" class="lnk red" data-vrm="${i}">Retirer</button></div>`).join('')
+      :'<p class="muted">Aucun validateur : la tâche se solde directement avec « Marquer comme faite ».</p>';
+    if(V.length<VAL_MAX)h+=`<div class="vrow"><button type="button" class="btn" id="vAdd">+ Ajouter un validateur</button>${V.length?`<span class="muted">Chaque validateur a ${VAL_N} jour${VAL_N>1?'s':''} ouvré${VAL_N>1?'s':''} pour valider.</span>`:''}</div>`;
+    if(r.vm)h+=`<p class="warn">Refusée par ${esc(r.vm)}</p>`;
+  }else if(V.length){
+    h+='<ol>'+V.map((u,i)=>{const nm=esc(r.vn[i]);if(fait||i<r.vk)return `<li class="ok">✓ ${nm} (validateur ${i+1})</li>`;
+      if(i===r.vk){const late=valLate(r,S.T);return `<li class="${late?'ko':''}"><b>${nm}</b> (validateur ${i+1}) : ${late?'validation en retard':'à valider'}, depuis le ${since}</li>`}
+      return `<li class="muted">${nm} (validateur ${i+1}) : à venir</li>`}).join('')+'</ol>';
+    if(iv&&me)h+=`<div class="pact"><button type="button" class="btn primary" id="vOk">Valider</button><button type="button" class="btn" id="vKo">Refuser</button></div>
+      <div id="vKoForm" hidden><label>Motif du refus <small>(obligatoire, transmis à ${esc(nameOf(r))})</small><textarea id="vKoMsg" rows="2"></textarea></label><div class="pact"><button type="button" class="btn blkon" id="vKoGo">Confirmer le refus</button><button type="button" class="btn" id="vKoCancel">Annuler</button></div></div>`;
+    else if(iv)h+=`<p class="muted">En attente de la validation de ${esc(r.vn[r.vk])}.</p>`;
+  }
+  if(r.vh&&r.vh.length)h+='<details><summary class="muted">Historique de validation</summary><ol>'+r.vh.map(x=>`<li${x.a==='refusée'?' class="ko"':''}>${esc(new Date(x.at).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}))} · ${esc(x.n)} : ${esc(x.a)}${x.k!=null?` (validateur ${x.k+1})`:''}${x.m?` – ${esc(x.m)}`:''}</li>`).join('')+'</ol></details>';
+  return h+'</div>'}
+const dmLong=d=>dt(d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
+function bindValBox(r){
+  const box=$('valBox');if(!box)return;const id=r.id;
+  box.querySelectorAll('[data-vi]').forEach(s=>s.onchange=()=>{const i=+s.dataset.vi,u=s.value;mutate(`${id} : validateur ${i+1} = ${teamName(u)}`,()=>{r.v[i]=u;r.vn[i]=teamName(u)},id)});
+  box.querySelectorAll('[data-vrm]').forEach(b=>b.onclick=()=>{const i=+b.dataset.vrm;mutate(`${id} : validateur ${i+1} retiré`,()=>{r.v.splice(i,1);r.vn.splice(i,1);if(!r.v.length){delete r.v;delete r.vn}},id)});
+  if($('vAdd'))$('vAdd').onclick=()=>{const m=team().find(m=>m.uid!==r.t&&!(r.v||[]).includes(m.uid));if(!m){toast('Aucun autre membre disponible comme validateur');return}
+    mutate(`${id} : validateur ${(r.v||[]).length+1} = ${m.name}`,()=>{r.v=[...(r.v||[]),m.uid];r.vn=[...(r.vn||[]),m.name]},id)};
+  if($('vOk'))$('vOk').onclick=()=>{const k=r.vk,last=k+1>=r.v.length;
+    mutate(last?`${id} validée (${k+1}/${r.v.length}) : action faite`:`${id} validée par ${BE.name} (${k+1}/${r.v.length}), transmise à ${r.vn[k+1]}`,()=>{pushHist(r,{a:'validée',k});if(last){clearVal(r);r.st='fait';delete r.m;delete r.bat}else{r.vk=k+1;r.vd=todayIdx()}},id)};
+  if($('vKo')){$('vKo').onclick=()=>{$('vKoForm').hidden=false;$('vKoMsg').focus()};$('vKoCancel').onclick=()=>{$('vKoForm').hidden=true};
+    $('vKoGo').onclick=()=>{const m=$('vKoMsg').value.trim();if(!m){$('vKoMsg').focus();toast('Indiquez le motif du refus');return}const k=r.vk;
+      mutate(`${id} refusée par ${BE.name} : ${m}`,()=>{pushHist(r,{a:'refusée',k,m});clearVal(r);r.vm=`${BE.name} : ${m}`},id)}}
+}
 function nextId(ch){const p=PREFIX(ch);const nums=[...ITEMS,...Object.values(ORIG)].filter(r=>r.id.startsWith(p+'-')).map(r=>parseInt(r.id.slice(p.length+1))||0);return p+'-'+String(Math.max(0,...nums)+1).padStart(2,'0')}
 function openEdit(id,presetCh,presetT){
   const r=id?byId(id):{ch:presetCh||[...S.chs][0]||CHS[0],br:'',a:'',p:'',c:'',s:S.T,e:S.T,t:presetT||''};
@@ -901,7 +973,9 @@ function openEdit(id,presetCh,presetT){
     if(en>MAXD){$('err').textContent='La date de fin doit être avant le 31 décembre.';f.e.focus();return}
     const v={a,ch:f.ch.value,br:f.br.value.trim()||'Divers',p:f.p.value.trim(),c:f.c.value,s,e:en};
     const stv=f.st.value,mv=f.m.value.trim(),tv=f.t.value;
-    const applySt=x=>{if(stv==='fait'){x.st='fait';delete x.m;delete x.bat}else if(stv==='bloque'){if(x.st!=='bloque')x.bat=Date.now();x.st='bloque';x.m=mv}else{delete x.st;delete x.m;delete x.bat}};
+    /* Avec des validateurs, « Fait » passe par le circuit de validation (soumission) */
+    const applySt=x=>{if(stv==='fait'&&x.t&&x.v&&x.v.length&&x.st!=='fait'){if(!inVal(x))submitVal(x);delete x.m;delete x.bat}
+      else if(stv==='fait'){x.st='fait';delete x.m;delete x.bat}else if(stv==='bloque'){if(x.st!=='bloque')x.bat=Date.now();x.st='bloque';x.m=mv}else{delete x.st;delete x.m;delete x.bat}};
     const applyDeps=x=>{const d=deps.filter(byId);if(d.length)x.d=d;else delete x.d};
     if(id){
       const cur=byId(id);if(!cur){$('err').textContent='Cette action a été supprimée par un autre utilisateur.';return}
@@ -994,7 +1068,7 @@ document.addEventListener('click',e=>{
 const tip=$('tip');
 document.addEventListener('pointerover',e=>{if(drag)return;const t=e.target.closest('.tc [data-id]');if(!t){tip.classList.remove('on');return}
   const r=byId(t.dataset.id);if(!r)return;
-  tip.innerHTML=`<b>${esc(r.a)}</b><span>${esc(r.id)} · ${esc(r.p)} · ${range(r)} · ${ST[status(r)]}</span>${r.t?`<span class="tiph">Affectée à ${esc(nameOf(r))}</span>`:''}${status(r)==='bloque'&&r.m?`<span class="tiph">Motif : ${esc(r.m)}</span>`:''}${r.by&&r.at?`<span class="tiph">Modifiée par ${esc(r.by)}, ${esc(when(r.at))}</span>`:''}<span class="tiph">Glisser pour déplacer${r.s!==r.e?', tirer un bord pour changer une date':''}</span>`;tip.classList.add('on')});
+  tip.innerHTML=`<b>${esc(r.a)}</b><span>${esc(r.id)} · ${esc(r.p)} · ${range(r)} · ${ST[status(r)]}</span>${r.t?`<span class="tiph">Affectée à ${esc(nameOf(r))}</span>`:''}${inVal(r)?`<span class="tiph">${ST[status(r)]} par ${esc(r.vn[r.vk])} (validateur ${r.vk+1}/${r.v.length})</span>`:''}${status(r)==='bloque'&&r.m?`<span class="tiph">Motif : ${esc(r.m)}</span>`:''}${r.by&&r.at?`<span class="tiph">Modifiée par ${esc(r.by)}, ${esc(when(r.at))}</span>`:''}<span class="tiph">Glisser pour déplacer${r.s!==r.e?', tirer un bord pour changer une date':''}</span>`;tip.classList.add('on')});
 document.addEventListener('pointermove',e=>{if(drag||!tip.classList.contains('on'))return;const w=tip.offsetWidth,x=Math.min(e.clientX+14,innerWidth-w-8);tip.style.left=x+'px';tip.style.top=(e.clientY+16)+'px'});
 document.addEventListener('scroll',()=>{if(!drag)tip.classList.remove('on')},true);
 
@@ -1042,7 +1116,8 @@ const makeEml=(subject,html,to)=>[...(to?['To: '+to]:[]),'X-Unsent: 1','Subject:
    reprend ses actions affectées dont l'échéance est dépassée à la date réelle du jour.
    Un rappel est « à relancer » tant qu'il n'a pas été préparé aujourd'hui.
    ===================================================================== */
-const lateFor=uid=>ITEMS.filter(r=>r.t===uid&&!r.st&&r.e<realToday).sort((a,b)=>a.e-b.e||a.id.localeCompare(b.id,'fr',{numeric:true}));
+/* Retards d'un membre : ses tâches non soumises dont l'échéance est dépassée + les validations qu'il tarde à faire */
+const lateFor=uid=>ITEMS.filter(r=>(r.t===uid&&!r.st&&!inVal(r)&&r.e<realToday)||(curV(r)===uid&&valLate(r,realToday))).sort((a,b)=>a.e-b.e||a.id.localeCompare(b.id,'fr',{numeric:true}));
 const dayStart=()=>{const n=new Date();return new Date(n.getFullYear(),n.getMonth(),n.getDate()).getTime()};
 const dueReminders=()=>team().filter(m=>RAPPELS[m.uid]&&RAPPELS[m.uid].on&&RAPPELS[m.uid].email&&lateFor(m.uid).length&&!((RAPPELS[m.uid].dernier||0)>=dayStart()));
 const okEmail=s=>/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(s);
@@ -1051,9 +1126,12 @@ function reminderMail(m){
   const th='style="border:1px solid #bfbfbf;padding:6px 10px;background:#c00000;color:#fff;text-align:left"',td='style="border:1px solid #bfbfbf;padding:6px 10px;vertical-align:top"';
   const url=location.origin+location.pathname;
   const html=`<html><head><meta charset="utf-8"></head><body style="font:11pt Calibri,Arial,sans-serif"><p>Bonjour ${esc(m.name.split(/\s+/)[0])},</p>`
-    +`<p>Petit rappel : ${list.length>1?`les ${list.length} actions suivantes, qui te sont affectées, ont dépassé leur échéance`:'l’action suivante, qui t’est affectée, a dépassé son échéance'} dans le planning de démarrage de la vague 1. Peux-tu ${list.length>1?'les solder ou me donner une nouvelle date':'la solder ou me donner une nouvelle date'} ?</p>`
+    +(list.some(r=>curV(r)===m.uid)
+      ?`<p>Petit rappel : ${list.length>1?`les ${list.length} actions suivantes sont en retard`:'l’action suivante est en retard'} dans le planning de démarrage de la vague 1 (échéance dépassée ou validation en attente de ta part). Peux-tu ${list.length>1?'les traiter':'la traiter'} ou me donner une nouvelle date ?</p>`
+      :`<p>Petit rappel : ${list.length>1?`les ${list.length} actions suivantes, qui te sont affectées, ont dépassé leur échéance`:'l’action suivante, qui t’est affectée, a dépassé son échéance'} dans le planning de démarrage de la vague 1. Peux-tu ${list.length>1?'les solder ou me donner une nouvelle date':'la solder ou me donner une nouvelle date'} ?</p>`)
     +`<table style="border-collapse:collapse;font:10pt Calibri,Arial,sans-serif"><tr><th ${th}>Action</th><th ${th}>Échéance</th><th ${th}>Retard</th></tr>`
-    +list.map(r=>{const j=realToday-r.e;return `<tr><td ${td}><b>${esc(r.id)}</b> – ${esc(r.a)}</td><td ${td}>${esc(d(r.e))}</td><td ${td}>${j} jour${j>1?'s':''}</td></tr>`}).join('')+'</table>'
+    +list.map(r=>{if(curV(r)===m.uid){const j=bdays(r.vd+1,realToday)-VAL_N;return `<tr><td ${td}><b>${esc(r.id)}</b> – <i>À valider (validateur ${r.vk+1}/${r.v.length})</i> : ${esc(r.a)}</td><td ${td}>soumise le ${esc(d(r.vd))}</td><td ${td}>${j} jour${j>1?'s':''} ouvré${j>1?'s':''}</td></tr>`}
+      const j=realToday-r.e;return `<tr><td ${td}><b>${esc(r.id)}</b> – ${esc(r.a)}</td><td ${td}>${esc(d(r.e))}</td><td ${td}>${j} jour${j>1?'s':''}</td></tr>`}).join('')+'</table>'
     +`<p>Le planning : <a href="${esc(url)}">${esc(url)}</a></p><p>Merci,<br>${esc(BE.name)}</p></body></html>`;
   return makeEml(`Rappel – ${list.length} action${list.length>1?'s':''} en retard (planning vague 1)`,html,RAPPELS[m.uid].email)}
 async function prepareReminder(m){
@@ -1072,7 +1150,7 @@ function openRappels(keep){
     <ul class="rapl">${TM.map(m=>{const R=RAPPELS[m.uid]||{},L=lateFor(m.uid);return `<li data-u="${esc(m.uid)}">
       <div class="rh"><b>${esc(m.name)}</b><label class="chk"><input type="checkbox" data-on${R.on?' checked':''}> Rappel activé</label></div>
       <input type="email" data-em placeholder="adresse e-mail" value="${esc(R.email||(m.uid===BE.uid?BE.email:''))}" aria-label="E-mail de ${esc(m.name)}">
-      <span class="${L.length?'late':'muted'}">${L.length?`${L.length} action${L.length>1?'s':''} affectée${L.length>1?'s':''} en retard : ${esc(L.map(r=>r.id).join(', '))}`:'Aucune action affectée en retard'}</span>
+      <span class="${L.length?'late':'muted'}">${L.length?`${L.length} action${L.length>1?'s':''} en retard (tâches ou validations) : ${esc(L.map(r=>r.id).join(', '))}`:'Aucune action en retard'}</span>
       <div class="rh"><span class="muted">Dernier rappel préparé : ${esc(last(R.dernier))}</span>${L.length&&R.on?`<button class="btn" data-prep>Préparer</button>`:''}</div></li>`}).join('')}</ul>
     <p class="err" id="rerr" role="alert"></p>
   </div>`;
