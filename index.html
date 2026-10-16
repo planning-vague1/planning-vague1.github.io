@@ -691,7 +691,7 @@ function baseMatch(r,noTodo){
   if(noTodo!==true&&S.todo&&!(S.todo==='-'?!r.t:S.todo==='*'?r.t:(r.t===S.todo||curV(r)===S.todo)))return false;
   if(S.q){const h=(r.id+' '+r.a+' '+r.p+' '+r.br+' '+r.ch+' '+(r.m||'')+' '+nameOf(r)).toLowerCase();if(!S.q.split(/\s+/).every(w=>h.includes(w)))return false}
   return true}
-function statusMatch(r){if(!S.status)return true;if(S.status==='semaine')return thisWeek(r);if(S.status==='modif')return isMod(r)||isNew(r);return status(r)===S.status}
+function statusMatch(r){if(!S.status)return true;if(S.status==='semaine')return thisWeek(r);if(S.status==='avalider')return inVal(r);if(S.status==='modif')return isMod(r)||isNew(r);return status(r)===S.status}
 /* Priorité : Haute, puis Moyenne, Basse, non renseignée */
 const rank=r=>({Haute:0,Moyenne:1,Basse:2})[r.c]??3;
 const isCrit=r=>r.c==='Haute';
@@ -746,6 +746,8 @@ function renderTop(){
     ['retard','Échéances dépassées','var(--late)',base.filter(r=>status(r)==='retard').length],
     ['bloque','Bloquées','var(--blk)',base.filter(r=>status(r)==='bloque').length],
     ['fait','Faites','var(--done)',base.filter(r=>status(r)==='fait').length]];
+  /* Membres : tâches d'équipe en attente de validation (dont validations en retard) */
+  if(!BE.ro){const av=base.filter(inVal),avl=av.filter(r=>status(r)==='vretard').length;K.push(['avalider',`Point${av.length>1?'s':''} à valider${avl?` (dont ${avl} en retard)`:''}`,avl?'var(--late)':'var(--now)',av.length])}
   $('kpis').innerHTML=K.map(([k,l,c,n])=>`<button class="kpi" data-k="${k}" style="--c:${c}" aria-pressed="${S.status===k}"><i></i><b>${n}</b><span>${l}</span></button>`).join('');
   $('kpis').querySelectorAll('.kpi').forEach(b=>b.onclick=()=>{S.status=S.status===b.dataset.k?null:b.dataset.k;update()});
   critBox.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.c===S.crit));
